@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Thu, 10 Nov 2022 08:11:05 GMT</lastBuildDate><item><title><![CDATA[AWS Application Load Balancer Access Logs, Lambda-promtail and Grafana Loki]]></title><description><![CDATA[Introduction An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</guid><pubDate>Mon, 07 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Thu, 10 Nov 2022 08:20:38 GMT</lastBuildDate><item><title><![CDATA[AWS Application Load Balancer Access Logs, Lambda-promtail and Grafana Loki]]></title><description><![CDATA[Introduction An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</guid><pubDate>Mon, 07 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For public-facing and private Application Load Balancers, we sometimes need to store and analyze access logs to create graphs and alerts or for general troubleshooting purposes. One of the possible ways to achieve this is by sending ALB access logs to a customer’s S3 bucket of choice. &lt;a href=&quot;https://github.com/grafana/loki/tree/main/tools/lambda-promtail&quot;&gt;Lambda-promtail&lt;/a&gt;, in turn, allows sending ALB access logs stored in S3 to a Loki endpoint.&lt;/p&gt;
 &lt;p&gt;In this post, I will demonstrate the concept of collecting access log data from several S3 buckets in different spoke accounts with the help of a single lambda-promtail instance running in a hub account. A common occurrence within an enterprise hub and spoke use case is when different teams utilize separate AWS accounts and virtual networks for application delivery. We will use Grafana Cloud (free tier) to receive the data via Grafana’s managed Loki endpoint.&lt;/p&gt;
 &lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out &lt;a href=&quot;https://pulumi.com&quot;&gt;pulumi.com&lt;/a&gt; if you still need to become familiar with it. You can deploy this demo stack using the Pulumi buttons below.&lt;/p&gt;
@@ -30,7 +30,7 @@
     &gt;
       &lt;a
     class=&quot;gatsby-resp-image-link&quot;
-    href=&quot;/static/da8aa5d3f4e1b6536197ffc851486b6f/74e37/grafana-datasource.png&quot;
+    href=&quot;/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/74e37/grafana-datasource.png&quot;
     style=&quot;display: block&quot;
     target=&quot;_blank&quot;
     rel=&quot;noopener&quot;
@@ -43,13 +43,13 @@
         class=&quot;gatsby-resp-image-image&quot;
         alt=&quot;Grafana Loki Datasource&quot;
         title=&quot;Grafana Loki Datasource&quot;
-        src=&quot;/static/da8aa5d3f4e1b6536197ffc851486b6f/f058b/grafana-datasource.png&quot;
-        srcset=&quot;/static/da8aa5d3f4e1b6536197ffc851486b6f/c26ae/grafana-datasource.png 158w,
-/static/da8aa5d3f4e1b6536197ffc851486b6f/6bdcf/grafana-datasource.png 315w,
-/static/da8aa5d3f4e1b6536197ffc851486b6f/f058b/grafana-datasource.png 630w,
-/static/da8aa5d3f4e1b6536197ffc851486b6f/40601/grafana-datasource.png 945w,
-/static/da8aa5d3f4e1b6536197ffc851486b6f/78612/grafana-datasource.png 1260w,
-/static/da8aa5d3f4e1b6536197ffc851486b6f/74e37/grafana-datasource.png 1732w&quot;
+        src=&quot;/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/f058b/grafana-datasource.png&quot;
+        srcset=&quot;/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/c26ae/grafana-datasource.png 158w,
+/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/6bdcf/grafana-datasource.png 315w,
+/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/f058b/grafana-datasource.png 630w,
+/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/40601/grafana-datasource.png 945w,
+/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/78612/grafana-datasource.png 1260w,
+/devops-pastebin/static/da8aa5d3f4e1b6536197ffc851486b6f/74e37/grafana-datasource.png 1732w&quot;
         sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
         style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
         loading=&quot;lazy&quot;
@@ -109,7 +109,7 @@ demo_promtail_lambda_function &lt;span class=&quot;token operator&quot;&gt;=&lt;
     &gt;
       &lt;a
     class=&quot;gatsby-resp-image-link&quot;
-    href=&quot;/static/776e71f7c1cd0961db0389a782adec2d/668c6/alb-response.png&quot;
+    href=&quot;/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/668c6/alb-response.png&quot;
     style=&quot;display: block&quot;
     target=&quot;_blank&quot;
     rel=&quot;noopener&quot;
@@ -122,13 +122,13 @@ demo_promtail_lambda_function &lt;span class=&quot;token operator&quot;&gt;=&lt;
         class=&quot;gatsby-resp-image-image&quot;
         alt=&quot;Application Load Balancer Response 200&quot;
         title=&quot;Application Load Balancer Response 200&quot;
-        src=&quot;/static/776e71f7c1cd0961db0389a782adec2d/f058b/alb-response.png&quot;
-        srcset=&quot;/static/776e71f7c1cd0961db0389a782adec2d/c26ae/alb-response.png 158w,
-/static/776e71f7c1cd0961db0389a782adec2d/6bdcf/alb-response.png 315w,
-/static/776e71f7c1cd0961db0389a782adec2d/f058b/alb-response.png 630w,
-/static/776e71f7c1cd0961db0389a782adec2d/40601/alb-response.png 945w,
-/static/776e71f7c1cd0961db0389a782adec2d/78612/alb-response.png 1260w,
-/static/776e71f7c1cd0961db0389a782adec2d/668c6/alb-response.png 1692w&quot;
+        src=&quot;/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/f058b/alb-response.png&quot;
+        srcset=&quot;/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/c26ae/alb-response.png 158w,
+/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/6bdcf/alb-response.png 315w,
+/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/f058b/alb-response.png 630w,
+/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/40601/alb-response.png 945w,
+/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/78612/alb-response.png 1260w,
+/devops-pastebin/static/776e71f7c1cd0961db0389a782adec2d/668c6/alb-response.png 1692w&quot;
         sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
         style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
         loading=&quot;lazy&quot;
@@ -143,7 +143,7 @@ demo_promtail_lambda_function &lt;span class=&quot;token operator&quot;&gt;=&lt;
     &gt;
       &lt;a
     class=&quot;gatsby-resp-image-link&quot;
-    href=&quot;/static/6d4c9a22faafc900a1543720e7e7c8d9/1c181/grafana-results.png&quot;
+    href=&quot;/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/1c181/grafana-results.png&quot;
     style=&quot;display: block&quot;
     target=&quot;_blank&quot;
     rel=&quot;noopener&quot;
@@ -156,13 +156,13 @@ demo_promtail_lambda_function &lt;span class=&quot;token operator&quot;&gt;=&lt;
         class=&quot;gatsby-resp-image-image&quot;
         alt=&quot;Grafana Cloud Loki&quot;
         title=&quot;Grafana Cloud Loki&quot;
-        src=&quot;/static/6d4c9a22faafc900a1543720e7e7c8d9/f058b/grafana-results.png&quot;
-        srcset=&quot;/static/6d4c9a22faafc900a1543720e7e7c8d9/c26ae/grafana-results.png 158w,
-/static/6d4c9a22faafc900a1543720e7e7c8d9/6bdcf/grafana-results.png 315w,
-/static/6d4c9a22faafc900a1543720e7e7c8d9/f058b/grafana-results.png 630w,
-/static/6d4c9a22faafc900a1543720e7e7c8d9/40601/grafana-results.png 945w,
-/static/6d4c9a22faafc900a1543720e7e7c8d9/78612/grafana-results.png 1260w,
-/static/6d4c9a22faafc900a1543720e7e7c8d9/1c181/grafana-results.png 2696w&quot;
+        src=&quot;/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/f058b/grafana-results.png&quot;
+        srcset=&quot;/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/c26ae/grafana-results.png 158w,
+/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/6bdcf/grafana-results.png 315w,
+/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/f058b/grafana-results.png 630w,
+/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/40601/grafana-results.png 945w,
+/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/78612/grafana-results.png 1260w,
+/devops-pastebin/static/6d4c9a22faafc900a1543720e7e7c8d9/1c181/grafana-results.png 2696w&quot;
         sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
         style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
         loading=&quot;lazy&quot;
