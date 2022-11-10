@@ -11,6 +11,7 @@ module.exports = {
       linkedin: `vodwood`,
     },
   },
+  pathPrefix: "/devops-pastebin",
   plugins: [
     `gatsby-plugin-image`,
     {
