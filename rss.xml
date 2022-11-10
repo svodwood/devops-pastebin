@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Thu, 10 Nov 2022 08:11:05 GMT</lastBuildDate><item><title><![CDATA[AWS Application Load Balancer Access Logs, Lambda-promtail and Grafana Loki]]></title><description><![CDATA[Introduction An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</guid><pubDate>Mon, 07 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+&lt;p&gt;An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For public-facing and private Application Load Balancers, we sometimes need to store and analyze access logs to create graphs and alerts or for general troubleshooting purposes. One of the possible ways to achieve this is by sending ALB access logs to a customer’s S3 bucket of choice. &lt;a href=&quot;https://github.com/grafana/loki/tree/main/tools/lambda-promtail&quot;&gt;Lambda-promtail&lt;/a&gt;, in turn, allows sending ALB access logs stored in S3 to a Loki endpoint.&lt;/p&gt;
+&lt;p&gt;In this post, I will demonstrate the concept of collecting access log data from several S3 buckets in different spoke accounts with the help of a single lambda-promtail instance running in a hub account. A common occurrence within an enterprise hub and spoke use case is when different teams utilize separate AWS accounts and virtual networks for application delivery. We will use Grafana Cloud (free tier) to receive the data via Grafana’s managed Loki endpoint.&lt;/p&gt;
+&lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out &lt;a href=&quot;https://pulumi.com&quot;&gt;pulumi.com&lt;/a&gt; if you still need to become familiar with it. You can deploy this demo stack using the Pulumi buttons below.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Keep in mind that sending data from a VPC-bound Lambda function to a public Loki endpoint will incur costs for NAT gateways and outbound data transfer.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;You may find the source code for this demo in &lt;a href=&quot;https://github.com/svodwood/pulumi-lambda-promtail-aws-multiacc&quot;&gt;this Github repo&lt;/a&gt;.&lt;/p&gt;
+&lt;h2&gt;What We Are Going To Build&lt;/h2&gt;
+&lt;p&gt;I separated the infrastructure into two Pulumi stacks: the hub and the spoke. For simplicity’s sake, we will not use stack references here. So mind the bucket name variable present in both stacks. The value has to be the same across both stacks for everything to work as expected:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;yaml&quot;&gt;&lt;pre class=&quot;language-yaml&quot;&gt;&lt;code class=&quot;language-yaml&quot;&gt;&lt;span class=&quot;token key atrule&quot;&gt;log-bucket-name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &amp;lt;your_unique_bucket_name&lt;span class=&quot;token punctuation&quot;&gt;&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;To start building, we are going to need to meet the prerequisites:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;One “hub” AWS account for the lambda-promtail instance.&lt;/li&gt;
+&lt;li&gt;One “spoke” AWS account to host our Application Load Balancer and an S3 bucket for the logs.&lt;/li&gt;
+&lt;li&gt;Two named AWS CLI profiles for the hub and for the spoke, respectively.&lt;/li&gt;
+&lt;li&gt;A Grafana Cloud account with an auto-generated Loki endpoint connection string.&lt;/li&gt;
+&lt;li&gt;A container image URL of lambda-promtail, uploaded to the private ECR registry of the “hub” account.&lt;/li&gt;
+&lt;li&gt;A working Pulumi environment.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;An S3 bucket policy in the spoke account will use the Lambda ARN obtained from the hub account. Therefore, we will deploy the hub stack first to define the Lambda ARN without utilising stack references.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Ensure the ECR image and both accounts share the same AWS region.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;Grafana Cloud&lt;/h2&gt;
+&lt;p&gt;To simplify our installation, we will use managed Loki in Grafana Cloud. Once in the Grafana UI, proceed to “Integrations and Connections”. Search for “Hosted logs” and proceed to generate the API key, selecting the option “Send logs from a standalone host”:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/static/da8aa5d3f4e1b6536197ffc851486b6f/74e37/grafana-datasource.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 74.68354430379746%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAPCAYAAADkmO9VAAAACXBIWXMAABYlAAAWJQFJUiTwAAACAUlEQVQ4y5WTzW6dMBCFef4uuutbVOqm79JEvamagIF7wWBsg23+vsomyW3UpE2RjmZY+PDN+JBhL6hhQLY1U3vi7v6B090Pbr+f0MYwThPGWuw4vkuZMwOq7zlXBW15R/7zJ+e6pqxrZNcl0/eaJcPJB0ajEKdv5Lc3lDc39HVN03Wcm4ZeKbS1yfg9yrTWjJNj2XY2YAWWdWVdV+Z5wYdwyIdr/xdlXd/jvWee5zS60RprDMMwsG3R/v+eRBgN/byS14qi7hDnnryWnKWh0x5lA1IHQpjxwV+J4zkfnifato0s3qD3DjfviIuirCrqS0NVnynKkqaVWGsRjcWMLpEPWhNBlDr6aLbve6pZrwfco2HVOTrtkINDapfoUj+MiHYizNcVRIMnRbJlOSizVV8I3hHmmaYzyGFCqolWjcm86W2qvZ4YYzSsJYQQHV+YPinbRkkIxy7yIj+U5xRFgRAi1aqqEKUgLwQPeUHTtkzOHYG3FmNs+lja4aoe8G5k2/e0t0vTImVH07THwWl6HGlJusbIJznnklnsEyGDSITrupHn95SiwGiVfscY6rj4vlfEeEWi38eD/Y+dZrJzOB8SRdUYxHngLO2LWDzRxN2tjxF5TWlk0Ry4Lmx8/NLy4XPDp68SP++vBnd/4zKeCRfXpxzGl2XdCfOW6r8OvmX4C54xhuwf+disAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Grafana Loki Datasource&quot;
+        title=&quot;Grafana Loki Datasource&quot;
+        src=&quot;/static/da8aa5d3f4e1b6536197ffc851486b6f/f058b/grafana-datasource.png&quot;
+        srcset=&quot;/static/da8aa5d3f4e1b6536197ffc851486b6f/c26ae/grafana-datasource.png 158w,
+/static/da8aa5d3f4e1b6536197ffc851486b6f/6bdcf/grafana-datasource.png 315w,
+/static/da8aa5d3f4e1b6536197ffc851486b6f/f058b/grafana-datasource.png 630w,
+/static/da8aa5d3f4e1b6536197ffc851486b6f/40601/grafana-datasource.png 945w,
+/static/da8aa5d3f4e1b6536197ffc851486b6f/78612/grafana-datasource.png 1260w,
+/static/da8aa5d3f4e1b6536197ffc851486b6f/74e37/grafana-datasource.png 1732w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;Hold on to the generated connection string - we will use it later to configure our lambda-promtail instance.&lt;/p&gt;
+&lt;h2&gt;Hub AWS Account: Lambda-promtail&lt;/h2&gt;
+&lt;p&gt;To start the deployment, click the button below or keep reading.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-lambda-promtail-aws-multiacc/tree/main/lambda-promtail-hub&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;The hub account will host our lambda-promtail instance, which will fetch data from S3 in the spoke account. We will need a single-az VPC to run the AWS Lambda function. For the sake of simplicity, we are not going to lock into a specific availability zone id during object creation, but this ideally has to be done to minimize data transfer costs in a production environment. Although, a multi-az setup is a recommended option in a real-world scenario. Additionally, the VPC will include an S3 Interface endpoint to reach the bucket’s contents - to minimize charges for outgoing traffic from the VPC towards the internet.&lt;/p&gt;
+&lt;p&gt;When the stack is up, please note Lambda’s IAM role ARN and the ARN of the function itself via stack export variables:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;yaml&quot;&gt;&lt;pre class=&quot;language-yaml&quot;&gt;&lt;code class=&quot;language-yaml&quot;&gt;&lt;span class=&quot;token key atrule&quot;&gt;lambda-promtail-role-arn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &amp;lt;role_arn_output&lt;span class=&quot;token punctuation&quot;&gt;&gt;&lt;/span&gt;
+&lt;span class=&quot;token key atrule&quot;&gt;lambda-promtail-function-arn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &amp;lt;function_arn_output&lt;span class=&quot;token punctuation&quot;&gt;&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Locate the &lt;code class=&quot;language-text&quot;&gt;WRITE_ADDRESS&lt;/code&gt; environment variable in the lambda function definition (promtail_lambda.py) and run “pulumi up”. You may parametrize the connection string and convert the variable into a Pulumi secret!&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;# Create the Lambda function from the ECR image:&lt;/span&gt;
+demo_promtail_lambda_function &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Function&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-lambda-promtail&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;lambda_promtail&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    image_uri&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_promtail_image_uri&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_promtail_role&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    memory_size&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;256&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    timeout&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;60&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    architectures&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;arm64&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    package_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Image&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_config&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;FunctionVpcConfigArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        subnet_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_private_subnet&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        security_group_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_sg&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    environment&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;FunctionEnvironmentArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        variables&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;WRITE_ADDRESS&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;-&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;-&lt;/span&gt; Loki connection string
+            &lt;span class=&quot;token string&quot;&gt;&quot;USERNAME&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;PASSWORD&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;BEARER_TOKEN&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;KEEP_STREAM&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;BATCH_SIZE&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;EXTRA_LABELS&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;TENANT_ID&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;You may find the source code for the stack in the &lt;a href=&quot;https://github.com/svodwood/pulumi-lambda-promtail-aws-multiacc/tree/main/lambda-promtail-hub&quot;&gt;lambda-promtail-hub&lt;/a&gt; directory of the project’s repository.&lt;/p&gt;
+&lt;h2&gt;Spoke AWS Account: ALB and S3&lt;/h2&gt;
+&lt;p&gt;To start the deployment, click the button below or keep reading.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-lambda-promtail-aws-multiacc/tree/main/lambda-promtail-spoke&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;The spoke stack will emulate our random application team’s account - it will host one Application Load Balancer with a dummy target group and an S3 bucket. We will modify the default bucket policy to allow the ALB to publish logs to the bucket and for the lambda-promtail instance in the hub account to read the log data.&lt;/p&gt;
+&lt;p&gt;Populate the required variables obtained from the hub account:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;yaml&quot;&gt;&lt;pre class=&quot;language-yaml&quot;&gt;&lt;code class=&quot;language-yaml&quot;&gt;&lt;span class=&quot;token key atrule&quot;&gt;lambda-promtail-role-arn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &amp;lt;role_arn_output&lt;span class=&quot;token punctuation&quot;&gt;&gt;&lt;/span&gt;
+&lt;span class=&quot;token key atrule&quot;&gt;lambda-promtail-function-arn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &amp;lt;function_arn_output&lt;span class=&quot;token punctuation&quot;&gt;&gt;&lt;/span&gt;
+&lt;span class=&quot;token key atrule&quot;&gt;log-bucket-name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &amp;lt;your_unique_bucket_name&lt;span class=&quot;token punctuation&quot;&gt;&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;To allow our Application Load Balancer to write logs to S3, we need to grant the regional Load Balancing AWS account-specific permissions via a Bucket Policy. For this, we need to select a correct load balancer account id from the ones listed &lt;a href=&quot;https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html#attach-bucket-policy&quot;&gt;here&lt;/a&gt;. If you are deploying the stacks in us-east-1, the default stack value will be correct out of the box. If you chose a different deployment region, replace the configuration variable with a valid id.&lt;/p&gt;
+&lt;p&gt;When the stack is up, obtain the Application Load Balancer’s DNS name and open it in your browser:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/static/776e71f7c1cd0961db0389a782adec2d/668c6/alb-response.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 25.949367088607595%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAFCAYAAABFA8wzAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAqUlEQVQY06WM3QqCQBCF9ymKXLdU6KbILqQfF6onUQoKXbXVpGdXQdgTCQlpQdCBj4Fv5gyZmxZmCwO2swbnB6w2HFt3B5fvYS8dmNYUGh1DZyYoM0D1yRsjjWEwpC1ExBIiSiFEgvMlQBDGCEWMNMsh0xuuMmvI83vjkkS27rkPwgief4Tnn5pJqrJEVZUoigJ1XeNblFL4JeRTsV9Wnceqd/+CdMW/PACr6Df6NaSMZAAAAABJRU5ErkJggg==&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Application Load Balancer Response 200&quot;
+        title=&quot;Application Load Balancer Response 200&quot;
+        src=&quot;/static/776e71f7c1cd0961db0389a782adec2d/f058b/alb-response.png&quot;
+        srcset=&quot;/static/776e71f7c1cd0961db0389a782adec2d/c26ae/alb-response.png 158w,
+/static/776e71f7c1cd0961db0389a782adec2d/6bdcf/alb-response.png 315w,
+/static/776e71f7c1cd0961db0389a782adec2d/f058b/alb-response.png 630w,
+/static/776e71f7c1cd0961db0389a782adec2d/40601/alb-response.png 945w,
+/static/776e71f7c1cd0961db0389a782adec2d/78612/alb-response.png 1260w,
+/static/776e71f7c1cd0961db0389a782adec2d/668c6/alb-response.png 1692w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;The access log should land in the S3 bucket in a few seconds. An S3 notification will trigger lambda-promtail in our hub account, forcing promtail to parse the event message, obtain the log file object’s name, fetch it and post its contents to our Loki endpoint.&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/static/6d4c9a22faafc900a1543720e7e7c8d9/1c181/grafana-results.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 48.10126582278481%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABAUlEQVQoz6VS246EIBTj/z91dEDuN7GbHnTWh03MZElqOQg9LUGVWtF6R2t98j+hjuPAE/Awv7PiZ4y7wPjwGHNOHiez3sdA7/tvve+iwVrFVJBSRs4ZScA6getc+wu1NpRSUcq1NyHGyWrZMrz3iDHChwjtqszfW5HaWota52GK8c6vNHREEesctDbyX4UQRNBs24Qx0MZgXVcs64q31nDOIcQobkKI0kDE6ZCpznWy6r2DoGUfAqx1s6MxIr5ZC2kagjAPUSSXgtaapJnpgjRVr9ciDggOivNgPaN9M7hf6dMFHV5uKU5+fE6nyP1OlZcY+dOFznh/jC7P5Qvw+fwASsYPS3QZ46gAAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Grafana Cloud Loki&quot;
+        title=&quot;Grafana Cloud Loki&quot;
+        src=&quot;/static/6d4c9a22faafc900a1543720e7e7c8d9/f058b/grafana-results.png&quot;
+        srcset=&quot;/static/6d4c9a22faafc900a1543720e7e7c8d9/c26ae/grafana-results.png 158w,
+/static/6d4c9a22faafc900a1543720e7e7c8d9/6bdcf/grafana-results.png 315w,
+/static/6d4c9a22faafc900a1543720e7e7c8d9/f058b/grafana-results.png 630w,
+/static/6d4c9a22faafc900a1543720e7e7c8d9/40601/grafana-results.png 945w,
+/static/6d4c9a22faafc900a1543720e7e7c8d9/78612/grafana-results.png 1260w,
+/static/6d4c9a22faafc900a1543720e7e7c8d9/1c181/grafana-results.png 2696w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;You may find the source code for the stack in the &lt;a href=&quot;https://github.com/svodwood/pulumi-lambda-promtail-aws-multiacc/tree/main/lambda-promtail-spoke&quot;&gt;lambda-promtail-spoke&lt;/a&gt; directory of the project’s repository.&lt;/p&gt;
+&lt;h2&gt;Cleaning Up&lt;/h2&gt;
+&lt;p&gt;Clean up by running &lt;code class=&quot;language-text&quot;&gt;pulumi destroy&lt;/code&gt;. Start by destroying the spoke account resources, then continue to the hub.
+If the S3 bucket fails to delete, try manually removing the objects inside by running the command:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;aws s3 &lt;span class=&quot;token function&quot;&gt;rm&lt;/span&gt; s3://&lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt;your_unique_bucket_name&lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;--recursive&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;--profile&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt;spoke-aws-profile&lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;</content:encoded></item></channel></rss>
