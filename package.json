@@ -1,0 +1,54 @@
+{
+  "name": "devops-pastebin",
+  "private": true,
+  "description": "A starter for a blog powered by Gatsby and Markdown",
+  "version": "0.1.0",
+  "author": "Sergey Vodwood <sergey.vodwood@gmail.com>",
+  "bugs": {
+    "url": "https://github.com/svodwood/devops-pastebin/issues"
+  },
+  "dependencies": {
+    "gatsby": "^4.24.7",
+    "gatsby-plugin-feed": "^4.24.0",
+    "gatsby-plugin-image": "^2.24.0",
+    "gatsby-plugin-manifest": "^4.24.0",
+    "gatsby-plugin-sharp": "^4.24.0",
+    "gatsby-remark-copy-linked-files": "^5.24.0",
+    "gatsby-remark-images": "^6.24.0",
+    "gatsby-remark-prismjs": "^6.24.0",
+    "gatsby-remark-responsive-iframe": "^5.24.0",
+    "gatsby-remark-smartypants": "^5.24.0",
+    "gatsby-source-filesystem": "^4.24.0",
+    "gatsby-transformer-remark": "^5.24.0",
+    "gatsby-transformer-sharp": "^4.24.0",
+    "prismjs": "^1.29.0",
+    "react": "^18.1.0",
+    "react-dom": "^18.1.0",
+    "typeface-merriweather": "0.0.72",
+    "typeface-montserrat": "0.0.75"
+  },
+  "devDependencies": {
+    "gh-pages": "^4.0.0",
+    "prettier": "^2.7.1"
+  },
+  "homepage": "https://github.com/svodwood/devops-pastebin.git",
+  "keywords": [
+    "devops-pastebin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/svodwood/devops-pastebin.git"
+  },
+  "scripts": {
+    "build": "gatsby build",
+    "develop": "gatsby develop",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md}\"",
+    "start": "gatsby develop",
+    "serve": "gatsby serve",
+    "clean": "gatsby clean",
+    "test": "echo \"Write tests! -> https://gatsby.dev/unit-testing\" && exit 1",
+    "deploy": "gatsby build --prefix-paths && gh-pages -d public",
+    "deploy:ci": "gatsby build --prefix-paths && gh-pages -d public -r https://$GH_TOKEN@github.com/svodwood/gatsbyjs-site.git"
+  }
+}
