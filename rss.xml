@@ -1,16 +1,549 @@
-<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Thu, 10 Nov 2022 11:22:10 GMT</lastBuildDate><item><title><![CDATA[AWS EC2 Auto Scaling, Target Tracking Policies and Prometheus Exporters]]></title><description><![CDATA[Introduction Quite a few workloads may still require deployment to virtual machines instead of container orchestration platforms, yet still…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</guid><pubDate>Thu, 10 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
-&lt;p&gt;Quite a few workloads may still require deployment to virtual machines instead of container orchestration platforms, yet still, have to be intelligently autoscaled. For example, a compound workload running on a stateless EC2 instance in an EC2 Autoscaling Group may emit various Prometheus-compatible metrics via Prometheus exporters. A simplified model for such a use case could be an Ubuntu instance running a node-exporter, exposing OS metrics, and a workload application delivering its own set of Prometheus-compatible metrics.&lt;/p&gt;
-&lt;p&gt;This post will illustrate how to configure an EC2 Autoscaling Group to use these metrics within Target Tracking Scaling Policies with the help of the AWS CloudWatch Agent.&lt;/p&gt;
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Fri, 11 Nov 2022 22:10:33 GMT</lastBuildDate><item><title><![CDATA[AWS EC2 Auto Scaling, Target Tracking Policies and Prometheus Exporters]]></title><description><![CDATA[Introduction Quite a few workloads may still require deployment to virtual machines instead of container orchestration platforms, yet still…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</guid><pubDate>Thu, 10 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+&lt;p&gt;Quite a few workloads may still require deployment to virtual machines instead of container orchestration platforms, yet still, have to be intelligently autoscaled. For example, a compound workload running on a stateless EC2 instance in an EC2 Autoscaling Group may emit various Prometheus-compatible metrics via Prometheus exporters. A simplified model for such a use case could be an Amazon Linux 2 instance running a node-exporter, exposing OS metrics, and a workload application delivering its own set of Prometheus-compatible metrics.&lt;/p&gt;
+&lt;p&gt;This post will illustrate how to configure an EC2 Autoscaling Group to use these metrics within Target Tracking Scaling Policies with the help of the AWS Cloudwatch agent.&lt;/p&gt;
 &lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out &lt;a href=&quot;https://pulumi.com&quot;&gt;pulumi.com&lt;/a&gt; if you still need to become familiar with it. You can deploy this demo stack using the Pulumi button below.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-ec2-cloudwatch-prometheus-autoscaling&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;You may find the source code for this demo in &lt;a href=&quot;https://github.com/svodwood/pulumi-ec2-cloudwatch-prometheus-autoscaling&quot;&gt;this Github repo&lt;/a&gt;.&lt;/p&gt;
 &lt;h2&gt;What We Are Going To Build&lt;/h2&gt;
-&lt;p&gt;We will create a pair of identical EC2 instances running in an EC2 Autoscaling Group, each running a demo web workload and exposing node-exporter and web-server metrics. Next, AWS CloudWatch Agent will scrape the metrics and publish them to CloudWatch. Finally, a Target Tracking Scaling Policy will govern autoscaling decisions based on a customized metric specification.&lt;/p&gt;
+&lt;p&gt;We will create a pair of identical EC2 instances running in an EC2 Autoscaling Group behind a public Application Load Balancer, each running a demo web workload and exposing node-exporter and web-server metrics. Next, AWS Cloudwatch agent will scrape the metrics and publish them to Cloudwatch. Finally, a Target Tracking Scaling Policy will govern autoscaling decisions based on a customized metric specification.&lt;/p&gt;
 &lt;p&gt;To start building, we are going to need to meet the prerequisites:&lt;/p&gt;
 &lt;ol&gt;
 &lt;li&gt;An AWS account with a named AWS CLI profile configured.&lt;/li&gt;
 &lt;li&gt;A working Pulumi environment.&lt;/li&gt;
 &lt;/ol&gt;
+&lt;h2&gt;Basic Infrastructure&lt;/h2&gt;
+&lt;p&gt;First, we will construct a VPC consisting of a pair of public subnets and a pair of private subnets:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+vpc.py
+&quot;&quot;&quot;&lt;/span&gt;
+&lt;span class=&quot;token comment&quot;&gt;# Create a VPC and Internet Gateway:&lt;/span&gt;
+demo_vpc &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Vpc&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-vpc&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_hostnames&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_support&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-vpc-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;config&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_igw &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;InternetGateway&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-igw&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-igw-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;config&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a default any-any security group for demo purposes:&lt;/span&gt;
+demo_sg &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-security-group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Allow any-any&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ingress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupIngressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Any&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    egress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupEgressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-sg-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;config&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create subnets:&lt;/span&gt;
+demo_azs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; get_availability_zones&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;state&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;available&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;names
+demo_public_subnets &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+demo_private_subnets &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; i &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;range&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    prefix &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+    
+    demo_public_subnet &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Subnet&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-public-subnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_subnet_cidrs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        availability_zone&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-public-subnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    
+    demo_public_subnets&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;append&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;demo_public_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    demo_public_route_table &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTable&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-public-rt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-spoke-rt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    
+    demo_public_route_table_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTableAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-public-rt-association-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_route_table&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_subnet&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    demo_public_wan_route &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Route&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-public-wan-route-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_route_table&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        gateway_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_igw&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        destination_cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    demo_eip &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Eip&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-eip-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-eip-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    
+    demo_nat_gateway &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;NatGateway&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-nat-gateway-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        allocation_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_eip&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_subnet&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-nat-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    demo_private_subnet &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Subnet&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-private-subnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_private_subnet_cidrs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        availability_zone&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-private-subnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    
+    demo_private_subnets&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;append&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;demo_private_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    demo_private_route_table &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTable&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-private-rt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-private-rt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_private_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    
+    demo_private_route_table_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTableAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-private-rt-association-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_private_route_table&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_private_subnet&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_private_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    demo_private_wan_route &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Route&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;demo-private-wan-route-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_private_route_table&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        nat_gateway_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_nat_gateway&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        destination_cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_private_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Second, let’s create an Application Load Balancer, a Target Group and Listener:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+alb.py
+&quot;&quot;&quot;&lt;/span&gt;
+&lt;span class=&quot;token comment&quot;&gt;# Create a load balancer:&lt;/span&gt;
+demo_alb &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;LoadBalancer&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-alb&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    internal&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    load_balancer_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;application&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_groups&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_sg&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    subnets&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_public_subnets&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_deletion_protection&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-alb&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a target group:&lt;/span&gt;
+demo_target_group &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;TargetGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-target-group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;80&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;HTTP&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-alb&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    health_check&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;TargetGroupHealthCheckArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        enabled&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        healthy_threshold&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;3&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        interval&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;10&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;HTTP&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;80&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_alb&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a listener:&lt;/span&gt;
+demo_listener &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Listener&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-listener&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    load_balancer_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_alb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;80&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;HTTP&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    default_actions&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ListenerDefaultActionArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;forward&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        target_group_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_target_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;pulumi&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_alb&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;With our basic infrastructure completed, we can continue configuring our EC2 web server, which will host all our custom configurations.&lt;/p&gt;
+&lt;h2&gt;Nginx, Node Exporter, Nginx Prometheus Exporter, Cloudwatch Agent - Oh My!&lt;/h2&gt;
+&lt;p&gt;The stack extensively uses AWS SSM Parameter Store, where we push all relevant configuration parameters. As a result, an Amazon Linux 2 instance configuration using user data during boot is effortless - it is simply a matter of fetching the correct parameter with AWS CLI:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;aws ssm get-parameter &lt;span class=&quot;token parameter variable&quot;&gt;--name&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; cwa_prometheus_parameter_path &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;--region&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; region &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; --with-decryption &lt;span class=&quot;token parameter variable&quot;&gt;--output&lt;/span&gt; text &lt;span class=&quot;token parameter variable&quot;&gt;--query&lt;/span&gt; Parameter.Value &lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; /opt/aws/amazon-cloudwatch-agent/etc/prometheus.yml&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;AWS SSM Parameter Store is also one of the easiest ways to configure AWS Cloudwatch agent natively, but we will get to this later. Onwards!&lt;/p&gt;
+&lt;p&gt;Our primary web server workload will be represented by an Nginx server, exposing a default page over port 80 and emulating a workload application. We will use Amazon Linux 2 x86_64 as our OS. On the observability layer, we will install Node Exporter to expose OS-level metrics and Nginx Prometheus Exporter to query the Nginx stub_status endpoint and convert this information into a Prometheus-compatible set of metrics. Both will run on every EC2 instance in the Autoscaling Group as system processes.&lt;/p&gt;
+&lt;p&gt;Let’s take care of enabling the stub_status Nginx module:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+nginx_config.py
+&quot;&quot;&quot;&lt;/span&gt;
+demo_nginx_stub_status_configuration_file &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; Template&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+server {
+        listen 127.0.0.1:{{ port }};
+        location = /metrics {
+                stub_status;
+        }
+}
+&quot;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+demo_nginx_stub_status_configuration &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; demo_nginx_stub_status_configuration_file&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;render&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;nginx_stub_status_port&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_nginx_configuration_parameter &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ssm&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Parameter&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-nginx-config&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;String&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    data_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;text&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;nginx_stub_status_config_parameter_path&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-nginx-config&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_nginx_stub_status_configuration
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Now, let’s define our Cloudwatch agent configuration:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+cwa.py
+&quot;&quot;&quot;&lt;/span&gt;
+&lt;span class=&quot;token comment&quot;&gt;# Cloudwatch Agent configuration, written to SSM parameter store:&lt;/span&gt;
+demo_cwa_configuration &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; json&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;dumps&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+	&lt;span class=&quot;token string&quot;&gt;&quot;agent&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+		&lt;span class=&quot;token string&quot;&gt;&quot;metrics_collection_interval&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;60&lt;/span&gt;
+	&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;token string&quot;&gt;&quot;logs&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+		&lt;span class=&quot;token string&quot;&gt;&quot;metrics_collected&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+			&lt;span class=&quot;token string&quot;&gt;&quot;prometheus&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+				&lt;span class=&quot;token string&quot;&gt;&quot;cluster_name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+				&lt;span class=&quot;token string&quot;&gt;&quot;log_group_name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;Prometheus&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+				&lt;span class=&quot;token string&quot;&gt;&quot;prometheus_config_path&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;/opt/aws/amazon-cloudwatch-agent/etc/prometheus.yml&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+				&lt;span class=&quot;token string&quot;&gt;&quot;emf_processor&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+					&lt;span class=&quot;token string&quot;&gt;&quot;metric_declaration_dedup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+					&lt;span class=&quot;token string&quot;&gt;&quot;metric_namespace&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;_Prometheus&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+					&lt;span class=&quot;token string&quot;&gt;&quot;metric_unit&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+						&lt;span class=&quot;token string&quot;&gt;&quot;process_open_fds&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Count&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+						&lt;span class=&quot;token string&quot;&gt;&quot;nginx_connections_waiting&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Count&quot;&lt;/span&gt;
+					&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+					&lt;span class=&quot;token string&quot;&gt;&quot;metric_declaration&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+						&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;source_labels&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+								&lt;span class=&quot;token string&quot;&gt;&quot;origin&quot;&lt;/span&gt;
+							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;label_matcher&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;^web-server-node-exporter$&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;dimensions&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+									&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+									&lt;span class=&quot;token string&quot;&gt;&quot;node&quot;&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+									&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;metric_selectors&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+								&lt;span class=&quot;token string&quot;&gt;&quot;^process_open_fds$&quot;&lt;/span&gt;
+							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+						&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+						&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;source_labels&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+								&lt;span class=&quot;token string&quot;&gt;&quot;origin&quot;&lt;/span&gt;
+							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;label_matcher&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;^web-server-nginx$&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;dimensions&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+									&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+									&lt;span class=&quot;token string&quot;&gt;&quot;node&quot;&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+									&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;
+								&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+							&lt;span class=&quot;token string&quot;&gt;&quot;metric_selectors&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+								&lt;span class=&quot;token string&quot;&gt;&quot;^nginx_connections_waiting$&quot;&lt;/span&gt;
+							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+						&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+					&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+				&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+			&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+		&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+	&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+	&lt;span class=&quot;token string&quot;&gt;&quot;metrics&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+		&lt;span class=&quot;token string&quot;&gt;&quot;namespace&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;_Memory&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+		&lt;span class=&quot;token string&quot;&gt;&quot;append_dimensions&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+			&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;${aws:AutoScalingGroupName}&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+			&lt;span class=&quot;token string&quot;&gt;&quot;node&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;${aws:InstanceId}&quot;&lt;/span&gt;
+		&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+		&lt;span class=&quot;token string&quot;&gt;&quot;aggregation_dimensions&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+			&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+				&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;
+			&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+		&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+		&lt;span class=&quot;token string&quot;&gt;&quot;metrics_collected&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+			&lt;span class=&quot;token string&quot;&gt;&quot;mem&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+				&lt;span class=&quot;token string&quot;&gt;&quot;measurement&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+					&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+						&lt;span class=&quot;token string&quot;&gt;&quot;name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;mem_used_percent&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+						&lt;span class=&quot;token string&quot;&gt;&quot;rename&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;MemoryUtilization&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+						&lt;span class=&quot;token string&quot;&gt;&quot;unit&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Percent&quot;&lt;/span&gt;
+					&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+				&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+				&lt;span class=&quot;token string&quot;&gt;&quot;metrics_collection_interval&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;60&lt;/span&gt;
+			&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+		&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+	&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_ssm_cwa_configuration_parameter &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ssm&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Parameter&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-cwa-config&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;String&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    data_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;text&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;cwa_settings_parameter_path&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-cwa-config&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_cwa_configuration
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Cloudwatch Agent prometheus scrape configuration, written to SSM parameter store:&lt;/span&gt;
+demo_prometheus_configuration_template &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; Template&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+global:
+  scrape_interval: 1m
+  scrape_timeout: 10s
+scrape_configs:
+  - job_name: Local_NodeExporter_Metrics
+    static_configs:
+      - targets:
+          - &apos;localhost:9100&apos;
+        labels:
+          origin: web-server-node-exporter
+          AutoScalingGroupName: {{autoscaling_group_name}}
+  - job_name: Local_Nginx_Metrics
+    static_configs:
+      - targets:
+          - &apos;localhost:9113&apos;
+        labels:
+          origin: web-server-nginx
+          AutoScalingGroupName: {{autoscaling_group_name}}
+&quot;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_prometheus_configuration &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; demo_prometheus_configuration_template&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;render&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;autoscaling_group_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_ssm_cwa_promscrape_configuration_parameter &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ssm&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Parameter&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-cwa-prom-config&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;String&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    data_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;text&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;cwa_prometheus_parameter_path&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-cwa-prom-config&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_prometheus_configuration
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a CloudWatch log group for the prometheus metrics:&lt;/span&gt;
+demo_prom_loggroup &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; cloudwatch&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;LogGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-cwa-log-group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+	name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;Prometheus&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+	retention_in_days&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+	tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-cwa-log-group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Several noteworthy things happened here. First, we set up the Cloudwatch agent for Prometheus metrics collection. Cloudwatch agent supports standard Prometheus scrape configurations. For example, we are interested in scraping a Node Exporter endpoint on port 9100 and an Nginx Prometheus Exporter endpoint on port 9113. Both jobs will append an “AutoScalingGroupName” tag to the metrics. Second, we configure the &lt;code class=&quot;language-text&quot;&gt;{&quot;logs&quot;:{&quot;metrics_collected&quot;:{&quot;prometheus&quot;:{}}}}&lt;/code&gt; stanza to only include “process_open_fds” and “nginx_connections_waiting” in our aggregations since, in this case, we are confident we can make autoscaling decisions based on these metrics alone. Notice that we will aggregate both metrics by “AutoScalingGroupName”. Finally, to top it off, let’s add the built-in memory reporting inside the &lt;code class=&quot;language-text&quot;&gt;{&quot;metrics&quot;:{&quot;metrics_collected&quot;:{&quot;mem&quot;:{}}}}&lt;/code&gt; stanza - it’s always nice to stay on top of our memory utilization.&lt;/p&gt;
+&lt;p&gt;With our Cloudwatch agent configuration sorted, let’s move on to our EC2 user data.&lt;/p&gt;
+&lt;h2&gt;Configuring the Instance at Boot&lt;/h2&gt;
+&lt;p&gt;A straightforward way to do this is via a bash script:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token shebang important&quot;&gt;#!/bin/bash&lt;/span&gt;
+yum update &lt;span class=&quot;token parameter variable&quot;&gt;-y&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Install CWA&lt;/span&gt;
+yum &lt;span class=&quot;token function&quot;&gt;install&lt;/span&gt; amazon-cloudwatch-agent &lt;span class=&quot;token parameter variable&quot;&gt;-y&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Install Nginx and configure the stub status module&lt;/span&gt;
+amazon-linux-extras &lt;span class=&quot;token function&quot;&gt;install&lt;/span&gt; nginx1.12 &lt;span class=&quot;token parameter variable&quot;&gt;-y&lt;/span&gt; 
+aws ssm get-parameter &lt;span class=&quot;token parameter variable&quot;&gt;--name&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; nginx_stub_status_config_parameter_path &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;--region&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; region &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;--output&lt;/span&gt; text &lt;span class=&quot;token parameter variable&quot;&gt;--query&lt;/span&gt; Parameter.Value &lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; nginx_config_file_path &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Add a user to run the exporters&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;useradd&lt;/span&gt; --no-create-home metrics_exporter
+
+&lt;span class=&quot;token comment&quot;&gt;# Install Node Exporter&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;wget&lt;/span&gt; https://github.com/prometheus/node_exporter/releases/download/v1.4.0/node_exporter-1.4.0.linux-amd64.tar.gz
+&lt;span class=&quot;token function&quot;&gt;tar&lt;/span&gt; xzf node_exporter-1.4.0.linux-amd64.tar.gz
+&lt;span class=&quot;token function&quot;&gt;cp&lt;/span&gt; node_exporter-1.4.0.linux-amd64/node_exporter /usr/local/bin/node_exporter
+&lt;span class=&quot;token function&quot;&gt;rm&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;-rf&lt;/span&gt; node_exporter-1.4.0.linux-amd64.tar.gz node_exporter-1.4.0.linux-amd64
+
+&lt;span class=&quot;token comment&quot;&gt;# Create Node Exporter systemd service&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;cat&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;EOF&apos;&lt;span class=&quot;token bash punctuation&quot;&gt; &lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; /etc/systemd/system/node-exporter.service&lt;/span&gt;
+[Unit]
+Description=Prometheus Node Exporter Service
+After=network.target
+[Service]
+User=metrics_exporter
+Group=metrics_exporter
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+[Install]
+WantedBy=multi-user.target
+EOF&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Install Nginx Exporter&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;wget&lt;/span&gt; https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v0.11.0/nginx-prometheus-exporter_0.11.0_linux_amd64.tar.gz
+&lt;span class=&quot;token function&quot;&gt;tar&lt;/span&gt; xzf nginx-prometheus-exporter_0.11.0_linux_amd64.tar.gz
+&lt;span class=&quot;token function&quot;&gt;cp&lt;/span&gt; nginx-prometheus-exporter /usr/local/bin/nginx-prometheus-exporter
+&lt;span class=&quot;token function&quot;&gt;rm&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;-rf&lt;/span&gt; nginx-prometheus-exporter_0.11.0_linux_amd64.tar.gz nginx-prometheus-exporter
+
+&lt;span class=&quot;token comment&quot;&gt;# Create Nginx Exporter systemd service&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;cat&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;EOF&apos;&lt;span class=&quot;token bash punctuation&quot;&gt; &lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; /etc/systemd/system/nginx-prometheus-exporter.service&lt;/span&gt;
+[Unit]
+Description=Prometheus Nginx Exporter Service
+After=network.target
+[Service]
+User=metrics_exporter
+Group=metrics_exporter
+Type=simple
+ExecStart=/usr/local/bin/nginx-prometheus-exporter -nginx.scrape-uri http://127.0.0.1:{{ nginx_stub_status_port }}/metrics -web.listen-address=127.0.0.1:9113
+[Install]
+WantedBy=multi-user.target
+EOF&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Configure CWA&lt;/span&gt;
+aws ssm get-parameter &lt;span class=&quot;token parameter variable&quot;&gt;--name&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; cwa_prometheus_parameter_path &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;--region&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; region &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; --with-decryption &lt;span class=&quot;token parameter variable&quot;&gt;--output&lt;/span&gt; text &lt;span class=&quot;token parameter variable&quot;&gt;--query&lt;/span&gt; Parameter.Value &lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; /opt/aws/amazon-cloudwatch-agent/etc/prometheus.yml
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl &lt;span class=&quot;token parameter variable&quot;&gt;-a&lt;/span&gt; fetch-config &lt;span class=&quot;token parameter variable&quot;&gt;-m&lt;/span&gt; ec2 &lt;span class=&quot;token parameter variable&quot;&gt;-c&lt;/span&gt; ssm:&lt;span class=&quot;token string&quot;&gt;&quot;{{ cwa_settings_parameter_path }}&quot;&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;-s&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Start everything up&lt;/span&gt;
+systemctl daemon-reload
+systemctl &lt;span class=&quot;token builtin class-name&quot;&gt;enable&lt;/span&gt; nginx
+systemctl start nginx
+systemctl &lt;span class=&quot;token builtin class-name&quot;&gt;enable&lt;/span&gt; node-exporter
+systemctl start node-exporter
+systemctl &lt;span class=&quot;token builtin class-name&quot;&gt;enable&lt;/span&gt; nginx-prometheus-exporter
+systemctl start nginx-prometheus-exporter&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Here is where we make use of our SSM Parameter Store parameters. Querying is made possible by attaching several managed IAM policies to the instance profile. AWS CLI is available out of the box on an Amazon Linux 2 AMI.&lt;/p&gt;
+&lt;h2&gt;Houston, we have worming!&lt;/h2&gt;
+&lt;p&gt;Generate some continuous GET requests to the Application Load Balancer public DNS  name, and after a while, we should see some squiggly lines appear in Cloudwatch.&lt;/p&gt;
+&lt;h5&gt;Custom Namespaces:&lt;/h5&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/2b478e3deb79eaede68c91df2009018a/f213e/cw-namespaces.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 24.68354430379747%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAFCAYAAABFA8wzAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAvklEQVQY03WQyW7DMAxE/f8/2EuRphtqwIuSVCYtLppWMnso0h4ewBEHgxEHZsaaEqZpwjzPGMcROWegVrgb3AwWNF3dg9/6xzOICDbekT7p4JaxcQGLddQc3sMdYg4q1mm7ogaSA2vB1TGYKRIpzivjtBBeLzveLzteVsZbYuRiva2o4WHMeJw2nGbCeSF8XHc8r4SnhVA0AlvDNgD1oAaha7RTVdxYuv7L5/HtHtjMIoHe0/bHjeLtP9934BeH9ocIlUVpsgAAAABJRU5ErkJggg==&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Cloudwatch Custom Namespaces&quot;
+        title=&quot;Cloudwatch Custom Namespaces&quot;
+        src=&quot;/devops-pastebin/static/2b478e3deb79eaede68c91df2009018a/f058b/cw-namespaces.png&quot;
+        srcset=&quot;/devops-pastebin/static/2b478e3deb79eaede68c91df2009018a/c26ae/cw-namespaces.png 158w,
+/devops-pastebin/static/2b478e3deb79eaede68c91df2009018a/6bdcf/cw-namespaces.png 315w,
+/devops-pastebin/static/2b478e3deb79eaede68c91df2009018a/f058b/cw-namespaces.png 630w,
+/devops-pastebin/static/2b478e3deb79eaede68c91df2009018a/40601/cw-namespaces.png 945w,
+/devops-pastebin/static/2b478e3deb79eaede68c91df2009018a/f213e/cw-namespaces.png 1192w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h5&gt;Nginx Metric:&lt;/h5&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/ab98c/nginx-conn-waiting.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 49.36708860759494%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABd0lEQVQoz32Ria7jIAxF8/+/OIv02mle2ySEAMY2kN4RTmaTqkE6sllk43uHL5cR3z6u+LhccBtHLM4hxIgtBMPymCweJLh1NWJKWL3Hc5owLw6LWzHkTMg5G0QZqopaq1E6pUJLj+XcF4iqUVuzPYv8PhsyM96t2l544f/r3b0V7L+T3kUEpShUC2IWxMwgVrAUEIuRWY9oZ4qUBSSKLIrWdgwkxTSKMYKZse+7jdJaO8b+a+S+P/JDjn+k6XlrGMI6YfMOzntM82w450zkX8KH06CYojU2UjwNmc2MboxbPYbr5YLrjxsCMUIi+O5oIsRE5igRwWRhBnXjTroR/ROf94cVuj8nazDEEDDPixXwkbD1wiQ2fooRmciKppQgzKYzc0ZRRVGxs56recAYxi3j+/jA1+sn7j4iaMUmFV6OGErDY0v2Zly8sXKxe8/1jMXeLlkxrFlwey64TQtSach1B9X9T2wvBCm4PWeMs0OUYnfvoNLwExckBggiaNjBAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Nginx Metric&quot;
+        title=&quot;Nginx Metric&quot;
+        src=&quot;/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/f058b/nginx-conn-waiting.png&quot;
+        srcset=&quot;/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/c26ae/nginx-conn-waiting.png 158w,
+/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/6bdcf/nginx-conn-waiting.png 315w,
+/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/f058b/nginx-conn-waiting.png 630w,
+/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/40601/nginx-conn-waiting.png 945w,
+/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/78612/nginx-conn-waiting.png 1260w,
+/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/ab98c/nginx-conn-waiting.png 2356w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h5&gt;Node Exporter Metric:&lt;/h5&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/ab98c/open-files.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 49.36708860759494%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABWUlEQVQoz21Ri3KDMAzj/39xj9vo+oBAgMTOC6h2Nm1Ze+NOJyc4ciJVb/UJH98HfNc1jqcTemvhvMfknEJrT8obCHYYFJ4IwziiMQZdb9HbAVUIjBCCgkNAzhnzPD9QBEW4bPU8I+WsfcuyoJSClJKuZb+KKeG/73rH9YbXGnv9OHO9ohJVuZ1MkWkySTjEDAoJHAX5he/1877cuKKUMTqvouu66uYz9ufrWnn+p2/BLIJ+MJhGCzuMaI2B6ToN5m6yGP83oL+QQFrTaZ8EIxrVoa5x+DnCcYQj3hIlBhHDewJzQIhRwbfg7haJ4PnSKF9ao1yN06RTnGdYxxgoYuKIECKc8yCiTZxIRSVEERXvRTTG+GCBhtK0LU7nsx5a190PYfGVmHFpWshwQVFPl83bZedcCqqvIeD93OHj0sPEGX1a0aVl57yi4aw9n41FywX97f8rTFzwC94yBlmKnI/EAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Node Exporter Metric&quot;
+        title=&quot;Node Exporter Metric&quot;
+        src=&quot;/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/f058b/open-files.png&quot;
+        srcset=&quot;/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/c26ae/open-files.png 158w,
+/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/6bdcf/open-files.png 315w,
+/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/f058b/open-files.png 630w,
+/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/40601/open-files.png 945w,
+/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/78612/open-files.png 1260w,
+/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/ab98c/open-files.png 2356w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h5&gt;High-cardinality Log Streams&lt;/h5&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/c679a/log-streams.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 56.32911392405063%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAALCAYAAAB/Ca1DAAAACXBIWXMAABYlAAAWJQFJUiTwAAABjElEQVQoz3VSSW7jMBDk/78yb8gHBphbTkYsjxLHkS3uuxarBt22PHKANFAoNtmsXkhxOl+w2x/wdmhxaN+xbxq0Hx+wzsF5/wQfArPSGsoYSCnRGw/z9gfu9y/Y1xcIrTXatkXTNBzonGOxOlQMw8CotT4hpoScC0II8DGh6BNqt0M+HyAoq7UOuRSUUjFNE8iWZYH3gS9iWdgnkI3TxIlWW+48LYCgFrrujBAiUsosuF4mQUo2juMjyU+gpNM03iqMMWJr22pWH3f/6Yz5v0/FiBAjUi5PAg+RbwlWXL/z9cpMoxDee2Rv+CG0MdDWQirNvtSa92hNnVByepCVU0435nXmfaGUxN/9Dl/dmcXMRlBtBCmY5k0+McVcesnf5yIlrymOZ0iOMQYlZ54nPQKVP91BfuBZJ/42dEYPSMJUHSfSBs55CNrIpeLUa5iQEXN9CG1BYsfjEUopFi+F5n7FPM88Q2LSEjyDMuDTJHQ2I9fxVtVaHfE8o9SKnlvr8Xn6grWWRbbdUPX/AB10UylrK02zAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;High-cardinality Log Streams&quot;
+        title=&quot;High-cardinality Log Streams&quot;
+        src=&quot;/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/f058b/log-streams.png&quot;
+        srcset=&quot;/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/c26ae/log-streams.png 158w,
+/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/6bdcf/log-streams.png 315w,
+/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/f058b/log-streams.png 630w,
+/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/40601/log-streams.png 945w,
+/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/78612/log-streams.png 1260w,
+/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/c679a/log-streams.png 2460w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h2&gt;Target Tracking Scaling Policies&lt;/h2&gt;
 &lt;blockquote&gt;
-&lt;p&gt;Work In Progress&lt;/p&gt;
+&lt;p&gt;Work in progress&lt;/p&gt;
 &lt;/blockquote&gt;</content:encoded></item><item><title><![CDATA[AWS Application Load Balancer Access Logs, Lambda-promtail and Grafana Loki]]></title><description><![CDATA[Introduction An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</guid><pubDate>Mon, 07 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For public-facing and private Application Load Balancers, we sometimes need to store and analyze access logs to create graphs and alerts or for general troubleshooting purposes. One of the possible ways to achieve this is by sending ALB access logs to a customer’s S3 bucket of choice. &lt;a href=&quot;https://github.com/grafana/loki/tree/main/tools/lambda-promtail&quot;&gt;Lambda-promtail&lt;/a&gt;, in turn, allows sending ALB access logs stored in S3 to a Loki endpoint.&lt;/p&gt;
 &lt;p&gt;In this post, I will demonstrate the concept of collecting access log data from several S3 buckets in different spoke accounts with the help of a single lambda-promtail instance running in a hub account. A common occurrence within an enterprise hub and spoke use case is when different teams utilize separate AWS accounts and virtual networks for application delivery. We will use Grafana Cloud (free tier) to receive the data via Grafana’s managed Loki endpoint.&lt;/p&gt;
