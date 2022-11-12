@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Fri, 11 Nov 2022 22:10:33 GMT</lastBuildDate><item><title><![CDATA[AWS EC2 Auto Scaling, Target Tracking Policies and Prometheus Exporters]]></title><description><![CDATA[Introduction Quite a few workloads may still require deployment to virtual machines instead of container orchestration platforms, yet still…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</guid><pubDate>Thu, 10 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Sat, 12 Nov 2022 21:45:55 GMT</lastBuildDate><item><title><![CDATA[AWS EC2 Auto Scaling, Target Tracking Policies and Prometheus Exporters]]></title><description><![CDATA[Introduction Quite a few workloads may still require deployment to virtual machines instead of container orchestration platforms, yet still…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/ec2-autoscaling-groups-prometheus-metrics/</guid><pubDate>Thu, 10 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;Quite a few workloads may still require deployment to virtual machines instead of container orchestration platforms, yet still, have to be intelligently autoscaled. For example, a compound workload running on a stateless EC2 instance in an EC2 Autoscaling Group may emit various Prometheus-compatible metrics via Prometheus exporters. A simplified model for such a use case could be an Amazon Linux 2 instance running a node-exporter, exposing OS metrics, and a workload application delivering its own set of Prometheus-compatible metrics.&lt;/p&gt;
 &lt;p&gt;This post will illustrate how to configure an EC2 Autoscaling Group to use these metrics within Target Tracking Scaling Policies with the help of the AWS Cloudwatch agent.&lt;/p&gt;
 &lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out &lt;a href=&quot;https://pulumi.com&quot;&gt;pulumi.com&lt;/a&gt; if you still need to become familiar with it. You can deploy this demo stack using the Pulumi button below.&lt;/p&gt;
@@ -217,7 +217,7 @@ demo_cwa_configuration &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&g
 					&lt;span class=&quot;token string&quot;&gt;&quot;metric_declaration_dedup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
 					&lt;span class=&quot;token string&quot;&gt;&quot;metric_namespace&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;_Prometheus&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
 					&lt;span class=&quot;token string&quot;&gt;&quot;metric_unit&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
-						&lt;span class=&quot;token string&quot;&gt;&quot;process_open_fds&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Count&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+						&lt;span class=&quot;token string&quot;&gt;&quot;node_sockstat_TCP_inuse&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Count&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
 						&lt;span class=&quot;token string&quot;&gt;&quot;nginx_connections_waiting&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Count&quot;&lt;/span&gt;
 					&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
 					&lt;span class=&quot;token string&quot;&gt;&quot;metric_declaration&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
@@ -236,7 +236,7 @@ demo_cwa_configuration &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&g
 								&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
 							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
 							&lt;span class=&quot;token string&quot;&gt;&quot;metric_selectors&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
-								&lt;span class=&quot;token string&quot;&gt;&quot;^process_open_fds$&quot;&lt;/span&gt;
+								&lt;span class=&quot;token string&quot;&gt;&quot;^node_sockstat_TCP_inuse$&quot;&lt;/span&gt;
 							&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
 						&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
 						&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
@@ -334,7 +334,7 @@ demo_prom_loggroup &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; c
 	retention_in_days&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
 	tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-cwa-log-group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
 &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Several noteworthy things happened here. First, we set up the Cloudwatch agent for Prometheus metrics collection. Cloudwatch agent supports standard Prometheus scrape configurations. For example, we are interested in scraping a Node Exporter endpoint on port 9100 and an Nginx Prometheus Exporter endpoint on port 9113. Both jobs will append an “AutoScalingGroupName” tag to the metrics. Second, we configure the &lt;code class=&quot;language-text&quot;&gt;{&quot;logs&quot;:{&quot;metrics_collected&quot;:{&quot;prometheus&quot;:{}}}}&lt;/code&gt; stanza to only include “process_open_fds” and “nginx_connections_waiting” in our aggregations since, in this case, we are confident we can make autoscaling decisions based on these metrics alone. Notice that we will aggregate both metrics by “AutoScalingGroupName”. Finally, to top it off, let’s add the built-in memory reporting inside the &lt;code class=&quot;language-text&quot;&gt;{&quot;metrics&quot;:{&quot;metrics_collected&quot;:{&quot;mem&quot;:{}}}}&lt;/code&gt; stanza - it’s always nice to stay on top of our memory utilization.&lt;/p&gt;
+&lt;p&gt;Several noteworthy things happened here. First, we set up the Cloudwatch agent for Prometheus metrics collection. Cloudwatch agent supports standard Prometheus scrape configurations. For example, we are interested in scraping a Node Exporter endpoint on port 9100 and an Nginx Prometheus Exporter endpoint on port 9113. Both jobs will append an “AutoScalingGroupName” tag to the metrics. Second, we configure the &lt;code class=&quot;language-text&quot;&gt;{&quot;logs&quot;:{&quot;metrics_collected&quot;:{&quot;prometheus&quot;:{}}}}&lt;/code&gt; stanza to only include “node_sockstat_TCP_inuse” and “nginx_connections_waiting” in our aggregations since, in this case, we are confident we can make autoscaling decisions based on these metrics alone. Notice that we will aggregate both metrics by “AutoScalingGroupName”. Finally, to top it off, let’s add the built-in memory reporting inside the &lt;code class=&quot;language-text&quot;&gt;{&quot;metrics&quot;:{&quot;metrics_collected&quot;:{&quot;mem&quot;:{}}}}&lt;/code&gt; stanza - it’s always nice to stay on top of our memory utilization.&lt;/p&gt;
 &lt;p&gt;With our Cloudwatch agent configuration sorted, let’s move on to our EC2 user data.&lt;/p&gt;
 &lt;h2&gt;Configuring the Instance at Boot&lt;/h2&gt;
 &lt;p&gt;A straightforward way to do this is via a bash script:&lt;/p&gt;
@@ -446,26 +446,26 @@ systemctl start nginx-prometheus-exporter&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
     &gt;
       &lt;a
     class=&quot;gatsby-resp-image-link&quot;
-    href=&quot;/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/ab98c/nginx-conn-waiting.png&quot;
+    href=&quot;/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/dc0c1/nginx-metric.png&quot;
     style=&quot;display: block&quot;
     target=&quot;_blank&quot;
     rel=&quot;noopener&quot;
   &gt;
     &lt;span
     class=&quot;gatsby-resp-image-background-image&quot;
-    style=&quot;padding-bottom: 49.36708860759494%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABd0lEQVQoz32Ria7jIAxF8/+/OIv02mle2ySEAMY2kN4RTmaTqkE6sllk43uHL5cR3z6u+LhccBtHLM4hxIgtBMPymCweJLh1NWJKWL3Hc5owLw6LWzHkTMg5G0QZqopaq1E6pUJLj+XcF4iqUVuzPYv8PhsyM96t2l544f/r3b0V7L+T3kUEpShUC2IWxMwgVrAUEIuRWY9oZ4qUBSSKLIrWdgwkxTSKMYKZse+7jdJaO8b+a+S+P/JDjn+k6XlrGMI6YfMOzntM82w450zkX8KH06CYojU2UjwNmc2MboxbPYbr5YLrjxsCMUIi+O5oIsRE5igRwWRhBnXjTroR/ROf94cVuj8nazDEEDDPixXwkbD1wiQ2fooRmciKppQgzKYzc0ZRRVGxs56recAYxi3j+/jA1+sn7j4iaMUmFV6OGErDY0v2Zly8sXKxe8/1jMXeLlkxrFlwey64TQtSach1B9X9T2wvBCm4PWeMs0OUYnfvoNLwExckBggiaNjBAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+    style=&quot;padding-bottom: 49.36708860759494%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABb0lEQVQoz32RiU7kMBBE8/+fiNCyMLcTx1fb3T4yhewJCwi0kZ5c6bQrdtf09HrC899XzMsCHwKc99+wgUb9K9oY6NUgEMFYh5uasWgNva6YYoxIKaGUglLrYx3Un7Wua4XkjJwzaq3IpYBZRk0kY2Jm/O+533/Xbbv/2j9RjOimIjL+2k+Sc0GSgsgySJwRd7qmJGDJ30++64k4wwVCCGEYb9uGWhtqa6Oxtcc1+9W6rvvmVh/6K8MwmAXeGazWjmA667qOAffh98F/BPQRSthXYy3UvIyA1DxjNRbT4e0Nh+MJPiZ4IlhPcBQROoHQR5KYBzGlf7DISPhyvQ2jq9oNvXNQaoYP3SjBEsNFHslFIlAISDGCiCDCA+aELILSk2VGzjLe+7fp4iL+nG94PpxxswE+Vzj5xJcG5SJezgpnbXE1HiZlWC4PpI61964pY9JRcFQap1mDSkOs2ydlQ6p3OM44qmVw0fZn306vvwNUagY6yFgK/QAAAABJRU5ErkJggg==&apos;); background-size: cover; display: block;&quot;
   &gt;&lt;/span&gt;
   &lt;img
         class=&quot;gatsby-resp-image-image&quot;
         alt=&quot;Nginx Metric&quot;
         title=&quot;Nginx Metric&quot;
-        src=&quot;/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/f058b/nginx-conn-waiting.png&quot;
-        srcset=&quot;/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/c26ae/nginx-conn-waiting.png 158w,
-/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/6bdcf/nginx-conn-waiting.png 315w,
-/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/f058b/nginx-conn-waiting.png 630w,
-/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/40601/nginx-conn-waiting.png 945w,
-/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/78612/nginx-conn-waiting.png 1260w,
-/devops-pastebin/static/1e8efc285b3eb044b7d14f094b715ae0/ab98c/nginx-conn-waiting.png 2356w&quot;
+        src=&quot;/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/f058b/nginx-metric.png&quot;
+        srcset=&quot;/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/c26ae/nginx-metric.png 158w,
+/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/6bdcf/nginx-metric.png 315w,
+/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/f058b/nginx-metric.png 630w,
+/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/40601/nginx-metric.png 945w,
+/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/78612/nginx-metric.png 1260w,
+/devops-pastebin/static/c4668c7aee671a0d77ca12b7ec30dbe9/dc0c1/nginx-metric.png 2348w&quot;
         sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
         style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
         loading=&quot;lazy&quot;
@@ -480,26 +480,26 @@ systemctl start nginx-prometheus-exporter&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
     &gt;
       &lt;a
     class=&quot;gatsby-resp-image-link&quot;
-    href=&quot;/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/ab98c/open-files.png&quot;
+    href=&quot;/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/dc0c1/node-exporter-metric.png&quot;
     style=&quot;display: block&quot;
     target=&quot;_blank&quot;
     rel=&quot;noopener&quot;
   &gt;
     &lt;span
     class=&quot;gatsby-resp-image-background-image&quot;
-    style=&quot;padding-bottom: 49.36708860759494%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABWUlEQVQoz21Ri3KDMAzj/39xj9vo+oBAgMTOC6h2Nm1Ze+NOJyc4ciJVb/UJH98HfNc1jqcTemvhvMfknEJrT8obCHYYFJ4IwziiMQZdb9HbAVUIjBCCgkNAzhnzPD9QBEW4bPU8I+WsfcuyoJSClJKuZb+KKeG/73rH9YbXGnv9OHO9ohJVuZ1MkWkySTjEDAoJHAX5he/1877cuKKUMTqvouu66uYz9ufrWnn+p2/BLIJ+MJhGCzuMaI2B6ToN5m6yGP83oL+QQFrTaZ8EIxrVoa5x+DnCcYQj3hIlBhHDewJzQIhRwbfg7haJ4PnSKF9ao1yN06RTnGdYxxgoYuKIECKc8yCiTZxIRSVEERXvRTTG+GCBhtK0LU7nsx5a190PYfGVmHFpWshwQVFPl83bZedcCqqvIeD93OHj0sPEGX1a0aVl57yi4aw9n41FywX97f8rTFzwC94yBlmKnI/EAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+    style=&quot;padding-bottom: 49.36708860759494%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABhElEQVQoz4WSS27cMAyGdf8TFL1CDlCgm6L7btLs2gnymM54LEuWbL1lyX9AJXaSIkUJfKAoiDTNn+zXwwmH+wcMQmA2BtM872jyxmLNATUHzNZCTxPEOEKOCsZacCFabsclBiHBvHfw3iPnjLwsr+RnX8qCLz9P+HrzB2XJSDkjxoSUEpZlQYyx4WNCiBGsris+su3+6scRn779xvXdBVIp/M9YKaUd1nXd2WKyz99vwaVGjQ5cSmzvPzLKYUsp74q9L7zChAQ9Wzjv26/VWv9JqQVsVgO0km3IfBjABwE5jhBStuE7Z3exSAQ6byit9/c9HzAqBXZ8fMTxdIZxHrN10MY2bwhjmyfRfAitS4JiEkDpCd2lx6j0S0ENRpcUTLOFNg7KBmhLyQHmpRPrXOuOim6Fw6ZuCM2HEBqMgr7nOJ+7llRraatCsyUBaDbOefSctx2kD9CK0co0Stk9rRS7Vx6HTuL2IjGEAhkrxBtkWtG7hMNF4NAJ3A0KIj6/+xvKfwLDtgQi3II7gwAAAABJRU5ErkJggg==&apos;); background-size: cover; display: block;&quot;
   &gt;&lt;/span&gt;
   &lt;img
         class=&quot;gatsby-resp-image-image&quot;
         alt=&quot;Node Exporter Metric&quot;
         title=&quot;Node Exporter Metric&quot;
-        src=&quot;/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/f058b/open-files.png&quot;
-        srcset=&quot;/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/c26ae/open-files.png 158w,
-/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/6bdcf/open-files.png 315w,
-/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/f058b/open-files.png 630w,
-/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/40601/open-files.png 945w,
-/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/78612/open-files.png 1260w,
-/devops-pastebin/static/5ea071461e73b365ba5af249e32f571a/ab98c/open-files.png 2356w&quot;
+        src=&quot;/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/f058b/node-exporter-metric.png&quot;
+        srcset=&quot;/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/c26ae/node-exporter-metric.png 158w,
+/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/6bdcf/node-exporter-metric.png 315w,
+/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/f058b/node-exporter-metric.png 630w,
+/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/40601/node-exporter-metric.png 945w,
+/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/78612/node-exporter-metric.png 1260w,
+/devops-pastebin/static/5902535d61acd2ebdb7e103ac1fbce26/dc0c1/node-exporter-metric.png 2348w&quot;
         sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
         style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
         loading=&quot;lazy&quot;
@@ -514,26 +514,26 @@ systemctl start nginx-prometheus-exporter&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
     &gt;
       &lt;a
     class=&quot;gatsby-resp-image-link&quot;
-    href=&quot;/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/c679a/log-streams.png&quot;
+    href=&quot;/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/8579d/log-streams.png&quot;
     style=&quot;display: block&quot;
     target=&quot;_blank&quot;
     rel=&quot;noopener&quot;
   &gt;
     &lt;span
     class=&quot;gatsby-resp-image-background-image&quot;
-    style=&quot;padding-bottom: 56.32911392405063%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAALCAYAAAB/Ca1DAAAACXBIWXMAABYlAAAWJQFJUiTwAAABjElEQVQoz3VSSW7jMBDk/78yb8gHBphbTkYsjxLHkS3uuxarBt22PHKANFAoNtmsXkhxOl+w2x/wdmhxaN+xbxq0Hx+wzsF5/wQfArPSGsoYSCnRGw/z9gfu9y/Y1xcIrTXatkXTNBzonGOxOlQMw8CotT4hpoScC0II8DGh6BNqt0M+HyAoq7UOuRSUUjFNE8iWZYH3gS9iWdgnkI3TxIlWW+48LYCgFrrujBAiUsosuF4mQUo2juMjyU+gpNM03iqMMWJr22pWH3f/6Yz5v0/FiBAjUi5PAg+RbwlWXL/z9cpMoxDee2Rv+CG0MdDWQirNvtSa92hNnVByepCVU0435nXmfaGUxN/9Dl/dmcXMRlBtBCmY5k0+McVcesnf5yIlrymOZ0iOMQYlZ54nPQKVP91BfuBZJ/42dEYPSMJUHSfSBs55CNrIpeLUa5iQEXN9CG1BYsfjEUopFi+F5n7FPM88Q2LSEjyDMuDTJHQ2I9fxVtVaHfE8o9SKnlvr8Xn6grWWRbbdUPX/AB10UylrK02zAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+    style=&quot;padding-bottom: 57.59493670886076%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAMCAYAAABiDJ37AAAACXBIWXMAABYlAAAWJQFJUiTwAAABpElEQVQoz61Sy27bMBDk/39Lgd4KFKjT5oEksuvU57g+9NCKkigxFJ+iHlMsLbuKziUwWHCXM7vcXba5f8LmIcO3+0d8+XqLm9sHPO/22L0ckO0P2K7wvHvB03af8Jh9T8huPiH7/AHbuw3Y6+sRp9MJeZ4nCCHQDz2GYcAw9Oj79/DeX9FqDWM04vEO8fAR4dcPsEZKqLZNAuM4JhDROpdI5F+LWusQY0xvUxzAAMDFEawoSmhjoLVGCAHjNGGaJmhtUgVEWB6KkY/sNN+ncQSmESF4MFHX1+ouBAKJG2sRQnf1XbB8t/QRh3kf8L9O6Dow68I8gBnUw8W9X/UwLmx85xvgvAdra45SCBRVhbIS+MM5RNMg5wWKsgK1RCqVBrcE9XcN8rOfx2MSMMZeA8acB0KDoYFZa+Gcg1L/xMqKkjWgLaHElajPgnUjIeVbIpFAF2NaifSl2VICekP2EqcCLonaVp+TKQXWGgsu3qBsgPEdhtXOUR+p2bwokOc8kfW8TmvQbxgJ/ZYOhXJwYVHZClJKNE0D2tuc85Rk+ZaS01D+AnEdmX+0JecEAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
   &gt;&lt;/span&gt;
   &lt;img
         class=&quot;gatsby-resp-image-image&quot;
         alt=&quot;High-cardinality Log Streams&quot;
         title=&quot;High-cardinality Log Streams&quot;
-        src=&quot;/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/f058b/log-streams.png&quot;
-        srcset=&quot;/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/c26ae/log-streams.png 158w,
-/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/6bdcf/log-streams.png 315w,
-/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/f058b/log-streams.png 630w,
-/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/40601/log-streams.png 945w,
-/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/78612/log-streams.png 1260w,
-/devops-pastebin/static/fc58b4603f4e75961e76401a90eb8acb/c679a/log-streams.png 2460w&quot;
+        src=&quot;/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/f058b/log-streams.png&quot;
+        srcset=&quot;/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/c26ae/log-streams.png 158w,
+/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/6bdcf/log-streams.png 315w,
+/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/f058b/log-streams.png 630w,
+/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/40601/log-streams.png 945w,
+/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/78612/log-streams.png 1260w,
+/devops-pastebin/static/93d9593b299016e8ee8359595465ac22/8579d/log-streams.png 2412w&quot;
         sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
         style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
         loading=&quot;lazy&quot;
@@ -542,9 +542,278 @@ systemctl start nginx-prometheus-exporter&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
   &lt;/a&gt;
     &lt;/span&gt;&lt;/p&gt;
 &lt;h2&gt;Target Tracking Scaling Policies&lt;/h2&gt;
+&lt;p&gt;Let’s imagine a hypothetical situation where we are sure that &lt;code class=&quot;language-text&quot;&gt;nginx_connections_waiting&lt;/code&gt; and &lt;code class=&quot;language-text&quot;&gt;node_sockstat_TCP_inuse&lt;/code&gt; should have the following average values across our instances in the autoscaling group during production operation at baseline. We are deliberately using some ridiculous values here for the sake of the demo:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;target_nginx_connections_waiting &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;
+target_node_sockstat_TCP_inuse &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;50&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;To quote the official documentation:&lt;/p&gt;
 &lt;blockquote&gt;
-&lt;p&gt;Work in progress&lt;/p&gt;
-&lt;/blockquote&gt;</content:encoded></item><item><title><![CDATA[AWS Application Load Balancer Access Logs, Lambda-promtail and Grafana Loki]]></title><description><![CDATA[Introduction An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</guid><pubDate>Mon, 07 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+&lt;p&gt;To create a target tracking scaling policy, you specify an Amazon CloudWatch metric and a target value that represents the ideal average utilization or throughput level for your application. Amazon EC2 Auto Scaling can then scale out your group (add more instances) to handle peak traffic, and scale in your group (run fewer instances) to reduce costs during periods of low utilization or throughput.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;To achieve this, we will define two Target Tracking scaling policies:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+scaling_policies.py
+&quot;&quot;&quot;&lt;/span&gt;
+&lt;span class=&quot;token comment&quot;&gt;# Define target tracking scaling policies:&lt;/span&gt;
+nginx_tracking_policy &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Policy&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-nginx-tracking-policy&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    autoscaling_group_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_autoscaling_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;name&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    estimated_instance_warmup&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;10&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    policy_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;TargetTrackingScaling&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    target_tracking_configuration&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PolicyTargetTrackingConfigurationArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        target_value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;target_nginx_connections_waiting&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        disable_scale_in&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        customized_metric_specification&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PolicyTargetTrackingConfigurationCustomizedMetricSpecificationArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            metric_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;nginx_connections_waiting&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            namespace&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;_Prometheus&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            statistic&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Average&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            unit&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Count&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            metric_dimensions&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+                autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PolicyTargetTrackingConfigurationCustomizedMetricSpecificationMetricDimensionArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+netstat_tracking_policy &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Policy&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-netstat-tracking-policy&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    autoscaling_group_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_autoscaling_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;name&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    estimated_instance_warmup&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;10&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    policy_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;TargetTrackingScaling&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    target_tracking_configuration&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PolicyTargetTrackingConfigurationArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        target_value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;target_node_sockstat_TCP_inuse&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        disable_scale_in&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        customized_metric_specification&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PolicyTargetTrackingConfigurationCustomizedMetricSpecificationArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            metric_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;node_sockstat_TCP_inuse&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            namespace&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;_Prometheus&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            statistic&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Average&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            unit&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Count&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            metric_dimensions&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+                autoscaling&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PolicyTargetTrackingConfigurationCustomizedMetricSpecificationMetricDimensionArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;AutoScalingGroupName&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The policies are visible in the Autoscaling Group user interface:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/2acc9/policies.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 56.32911392405063%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAALCAYAAAB/Ca1DAAAACXBIWXMAABYlAAAWJQFJUiTwAAABhUlEQVQoz4VSXXOEIAzk///CPvSqV78QBEERRb3bTlLv6rUPzcwOBDYJ2SDKRuI9u+LtkiMvSmhjYXqHYRwxhoAxjMf+dX1iGA58+6KsKrxfLrh8ZLjmGWxzhVU1VNehkS1apaGNgVQKnTFo2hb2KOgp0Sk5+aJ3DkprDmiaBk1dwZqOqzrvmTSego21MLZH7zy8H54+gV9IREsHxsAYixBnbPsN27b9YF153bcNMc5cYBwDwjSh7x3oUZQwhABBOtEFIwSuQgTypxgRY8Q0xT8t+kO7eVkYcZ45RtChlBJStnDOPaufbd93bp84sm25VYqjYmdb1xXCew/ddfyKZVmwpISUEu8p4Ha74X6/c2s0lAcvHbx4dEG8bd8hnPPI8hxFUT7xWRSoqgpKKdaOEpL4WZajLKsXHv0SrfVPQtKCplvThGmta9aIkjyMyKRrXRNHHmhY87NRccFfwg/sPNpIaX0hUnL6uMQ980iz31oLmmRaV778xsYr63gE8hTj/D9vnvEFWCtMm5aE7bIAAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Autoscaling Policies&quot;
+        title=&quot;Autoscaling Policies&quot;
+        src=&quot;/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/f058b/policies.png&quot;
+        srcset=&quot;/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/c26ae/policies.png 158w,
+/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/6bdcf/policies.png 315w,
+/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/f058b/policies.png 630w,
+/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/40601/policies.png 945w,
+/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/78612/policies.png 1260w,
+/devops-pastebin/static/690121fec7ca1f2fb30c8fd93a781d28/2acc9/policies.png 2378w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;After several minutes of inactivity and initial data gathering, our Cloudwatch alarms have traced our idle state. The warnings now indicate that we are over-provisioned, running at minimum capacity:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/f36fd/alarms.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 53.79746835443038%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAALCAYAAAB/Ca1DAAAACXBIWXMAABYlAAAWJQFJUiTwAAABu0lEQVQoz1VTW27cMAzc8/csPUDv0M+iXwGKNlsk6/Vatt4PSppiuNmkEUCQJsThzBg6PS8Gr+sN+77Dh6BhncNhrYbzXoP9R37UQesIfxi46xl+u+B0XRZsm4GIoNSK1hq8D9ozZtdeKuUO4jxCjHBvoDEGxDaQ//6E//YF7vtXnHjBWgtpDb0Lcs6IKUG6oJSK/bA6vB8HNrMrs5QSSik4jgPWOviQUGUgpIITmb0eCc8mwsSKUhukZIze0ZooIwKMMZQxrSEI5bLXpCGVCOlNZ069d7zYgt9bgs0CkQ6kiDm6DpAJo/cBTz+dU+m0Zk5AhiBUj9wS5px3wPOe8XQNSG3ohSQJPNK7yidD3qNEekuWtIan9QqX7QcgaV5cwa9bxMtR0HpHnwMTwJxDgRhkS/mUylxrVQD26Tcz4xPDNVT1bcaA+QZEdilnrbdtw7qummOM4FYy9MV+lry4qqA8urEV0kP/z0P2cym6gHL5M9UWWtQiqtQHoOCPSfjx4nA2GalV3aaXRZQJg/W63nBZFmX5YEgglw+dUcn3l+GxOw9jHZwPCCG+vwr1Lcb3F/KoP3pcmHSG3/8AWdVTxJpzGZQAAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Cloudwatch Alarms&quot;
+        title=&quot;Cloudwatch Alarms&quot;
+        src=&quot;/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/f058b/alarms.png&quot;
+        srcset=&quot;/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/c26ae/alarms.png 158w,
+/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/6bdcf/alarms.png 315w,
+/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/f058b/alarms.png 630w,
+/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/40601/alarms.png 945w,
+/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/78612/alarms.png 1260w,
+/devops-pastebin/static/02df1e2d00c925f84ca199b529d0070d/f36fd/alarms.png 2488w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h2&gt;Load Testing&lt;/h2&gt;
+&lt;p&gt;Out Autoscaling Group is now at its minimum capacity of two, with eight instances of maximum allowed capacity.
+Let us now test our scale-out and scale-in policies by running a basic load test with the help of Locust:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+./load-test/locustfile.py
+&quot;&quot;&quot;&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; locust &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; HttpUser&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; task
+            
+&lt;span class=&quot;token keyword&quot;&gt;class&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;User&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;HttpUser&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token decorator annotation punctuation&quot;&gt;@task&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;def&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;mainPage&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;self&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+        self&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;client&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;get&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;/&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/36d90b1621630872f6e99ca8ccbca790/1cfc2/locust-start.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 115.18987341772151%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAXCAYAAAALHW+jAAAACXBIWXMAABYlAAAWJQFJUiTwAAAEF0lEQVQ4y62Ve0yVZRzH+csKFDmH++FyOMA5wDnvuXE4F4G4FKUNQ+4cDpIi/QElzMsmJEzEMhpam8sK3VxZaJtW1mqrVZu6oRnFQsXj4ZZykvzDdKvV2vqDT3uf4xEpdNV6tu/7/T2X9/v8nt/v97xvSJw9i/8TIfIjNidTdOId91jo+Avf9c7fBIMT0dkZKIxaIs06oiw6lGYdkZagrRW20hTg4DuLiYYExbKesFHYVISjLg9TmQN7bS6WcqeAoy6XnJpcXPX5WCtdqJz6e3soP2JsmaQWm3DW52KpcApxe10u5nKHEHd58gNcny82kEMT79CjchpQOQzCDm5wJ4YJTiOJTjMquxGVQyI+R0Jll4g0aVEa01EY04iQ0sSxY20ZRJg0hEsphEtqFOa0OyEQgpFWLdmri9nQ0U7jllaqWtbhbnuauo3NPLmhnjXNHkqb3MIua64XXNJQQZG7jJKGSuxlJcTYMgIeJjgNhGYm0vFSLz/duMH099PIbW5ujn/avhg6RYQpVRw9JMEp8VBmAl17dvPrz7/gn/Hzb9uXZ07PC8puRlm1WEuLaNjUIo5a1bqe6mea7osamVvXi/WPeMrnjyyynJOBOs+MtsiOyqFHnWch0pxGuF7N0qwkFJIGpVEj+hFSCg9o4whJiiBErRC8RBs3nxRZYLkxRXj1wWefMHjiOEc/ek/gyIeLIzB3nHdOHOP9Tz9m+54XRGIDSXFJPJihondfP3/89jv/pQ2PjogyEjGUi3OZQc26rc8yNHyOk18NcXZkmKFvv+bMvTAyfHvNOUa9Y+x78wBKSzrxCwrbJYk4ysFVmFKJydaJZEVb5TudLljuy7Yc32WSWjiyVJ8svFtQ2PJC06qHRfYeX1tFsXsNKxuredRTTomngsfWVopxeUxmeXxF5UpWVK6ioG41ltKi+SzLRw7TJ9HW08nk1BTecR/jU5OM+bxMTE1yZeYqF72XhD164TzfXTjP2GWvGJfZNz7OG4cPEZUdTMrtwu7eu5vr/mtMeH1cvzaL7+Il/Feu4p+Z4bLXy4+zs4z7fExPTePzXubWzVv84Pcz5Zvg0OBhom26gKCcGaU5jfzGcjoOvszm/X1s2d/H1oF+Nu/dxabe7Wx+vpu2HR2CN+3qEmjf2Un7zufY9mKPKPKobN3CD6zSpiPUoiHMmkqYRUOoVUOYKYUlabGoiiw89XYfNa91UTewA/fBHtwHdlD7ejfrj/ZTvK0JpfGuqyeLyilX2fULkOiSiDanY2soZeDmN3SdHKT79BF6zh6j69QgnZ+/xavXhmh59xWWZyUT7zQs/KcshpjsDJILrOS11FLY3kBhu4eCNo+wCzbWC9tYXUJ08Kbc7w8W3EjUpqRBoU8JwHAXG1KIMqffqcM/AYtdxLrhXrhRAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Start Locust&quot;
+        title=&quot;Start Locust&quot;
+        src=&quot;/devops-pastebin/static/36d90b1621630872f6e99ca8ccbca790/f058b/locust-start.png&quot;
+        srcset=&quot;/devops-pastebin/static/36d90b1621630872f6e99ca8ccbca790/c26ae/locust-start.png 158w,
+/devops-pastebin/static/36d90b1621630872f6e99ca8ccbca790/6bdcf/locust-start.png 315w,
+/devops-pastebin/static/36d90b1621630872f6e99ca8ccbca790/f058b/locust-start.png 630w,
+/devops-pastebin/static/36d90b1621630872f6e99ca8ccbca790/1cfc2/locust-start.png 900w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;Soon enough, we shall see a scale-out event:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/57f7d/scale-out.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 48.10126582278481%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABiUlEQVQoz21SCY6DMAzk/w/cctNAuFoIR6EgrlmNaauttEiWM2PH2BNbXddhmibUtUHbdViWBeP4RN8/5Lyu67dtK7btm9u2Tfzz+YS1LifJotM8y5mF6rpG07YwxqA2BsY057muUVWn/cWML+sKq59b7McOpWIopSThOA7EcQI/CMRcz8f1qhBGEYIgFO/5AaLoCt8PhLvd7+BnsRgLPB4D+r7HOI6Cb7c7irJEluXI8wJlWaIoTuM5z3OJF0UhHO9LwX5qse+7XDwDD8FhGMFxPTiOi8vFlo5c14NtO8L9XGzBF9uB7bjIskwasfZjk5GbpsW9qtA0jRQkpkbUhzKcOpqPr14cY8TzPP/f4TAMgqkptfFfnbFjYurpeT4c1xXO80+sdfrdIdeHfxrGUf6U5bkkJYlGojXSNPsYx4uTRHh65g3D+Orw9cpMosBvDfkQaXoW5IszrrWGimPBNJ2m4slxQulw3RYpyMWmXjIy1yZJZD1k1DASCa5KibEIea4SV4ex9yv/AkWB8FOSSd6/AAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Scale-out events&quot;
+        title=&quot;Scale-out events&quot;
+        src=&quot;/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/f058b/scale-out.png&quot;
+        srcset=&quot;/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/c26ae/scale-out.png 158w,
+/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/6bdcf/scale-out.png 315w,
+/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/f058b/scale-out.png 630w,
+/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/40601/scale-out.png 945w,
+/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/78612/scale-out.png 1260w,
+/devops-pastebin/static/d3dbf806f71b597c13c1bc478eb477ab/57f7d/scale-out.png 2088w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;The total number of instances is now eight:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/31df8/scale-out-instances.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 51.26582278481012%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABpklEQVQozz1SC8/TMAzs//95MCRAMD7t2xBr8344cZr1UNyulU5u7Mv17Hr69fuKL5cLvl6+4fuPn3guC7S18FbD6yeCWWCshdJG4qwUrHMIMcKHAB+DvMs5BkyDpI2FMkaEhuCiNeZ/DzzvfzD/vWFRWjB4z3mBcQ7+EHQD3gvGedLa4PPzjpQyWmuCdV3BbQWvXWJb99y79uYNEBGc8zB2dz3FlDBElVJojVFKwcjlnE+klM4c5SycdMScsoha6+B9wFRrRcqE2XgEYlBlhBB2oUNscMZlKhUukvC996BCMMGg8l4fvImZEWvHVRdcVUbgF7xzIjQwLr4fah03W6F8hloWlFZwdx+oa5X6GMfEQ7116MRYYkXijkIkXxugUrBtG7btJTO11JAKI8UEXhkmK6y9YdsgMxXBUFZ8aNod1n44zIfDsNvbNhB33F2BDhlaKRQueLjb6bDtDhmlvTBHFpfUXjL40yHR0fAG7i+Y3BALI4YoDnVexOHZ8himyxU3nXA3GaE0OGvPZR371XsX8mj1YQnaJ9mKXDIe9hNUSTjj5/wHa6ICQYF2fU0AAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Scale-out instances&quot;
+        title=&quot;Scale-out instances&quot;
+        src=&quot;/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/f058b/scale-out-instances.png&quot;
+        srcset=&quot;/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/c26ae/scale-out-instances.png 158w,
+/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/6bdcf/scale-out-instances.png 315w,
+/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/f058b/scale-out-instances.png 630w,
+/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/40601/scale-out-instances.png 945w,
+/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/78612/scale-out-instances.png 1260w,
+/devops-pastebin/static/b485bcf097a6fada5e13164ef6161cce/31df8/scale-out-instances.png 2366w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;Let’s stop the load test and wait for the scale-in event. It should take around fifteen minutes, according to the Cloudwatch alarm:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/31df8/scale-in.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 51.26582278481012%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABeUlEQVQoz3VS7XKDMAzj/R+wBdYPIBBoN0iABFooaCdz7Lbd9kMXO45l2U7QNAaZUsjzAn4YMM8zpmn6Or/j+Xz+CcZ652Bsi8C2rRjGWtB+PB5C7Lz/N/l3Meccuq5D1/UImDxNM4ZxRNM0QshEPhjHEcMwfMF7L2Cx3Ze3fQ9jDJ7TtClsjIUxFmEUS2BZFpxOZ4RRhMPhiDh+EzAeRTHCMBL/eAyRppmIKMtKzoAqXq+XyE6SFHXdYFlXaK2hdYmiKKDyHErlkkybM1dKoSi0qOUIrG2lo4Byu96h7TpJYKtUmJNI5bhcrkizTGwWTNINvKN/u92ldZ5sP2CFcXzIQM+XC6qqEkJRkikpsuN6TX74/BkUQKKPupY9BFw3SUlIAra+K2RrTOQ9IcrSTRljLHC/vwshZ8/WhdD7AX1PhVeRLoT5RriTCWGytborZ9xaK8vgvPljAjok4BwKreGcx7quUpmoqht0WQpYZAd9vqcgKiQxl/sJKaXzxdI8de4AAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Scale-in events&quot;
+        title=&quot;Scale-in events&quot;
+        src=&quot;/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/f058b/scale-in.png&quot;
+        srcset=&quot;/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/c26ae/scale-in.png 158w,
+/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/6bdcf/scale-in.png 315w,
+/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/f058b/scale-in.png 630w,
+/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/40601/scale-in.png 945w,
+/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/78612/scale-in.png 1260w,
+/devops-pastebin/static/92e9c810d7cc18a7708a21026d4026b3/31df8/scale-in.png 2366w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h2&gt;Summing It All Up&lt;/h2&gt;
+&lt;p&gt;We successfully demonstrated that it is possible to effectively manage the EC2 instance capacity of an Autoscaling Group using metrics scraped from various Prometheus exporters - this means implementing autoscaling policies based on application-level metrics in a real-world production scenario.&lt;/p&gt;
+&lt;h2&gt;Cleaning Up&lt;/h2&gt;
+&lt;p&gt;Clean up by running &lt;code class=&quot;language-text&quot;&gt;pulumi destroy&lt;/code&gt;. Happy autoscaling!&lt;/p&gt;</content:encoded></item><item><title><![CDATA[AWS Application Load Balancer Access Logs, Lambda-promtail and Grafana Loki]]></title><description><![CDATA[Introduction An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/lambda-promtail/</guid><pubDate>Mon, 07 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;An AWS Application Load Balancer is a simple and convenient AWS construct to implement cloud-native Layer 7 load balancing. For public-facing and private Application Load Balancers, we sometimes need to store and analyze access logs to create graphs and alerts or for general troubleshooting purposes. One of the possible ways to achieve this is by sending ALB access logs to a customer’s S3 bucket of choice. &lt;a href=&quot;https://github.com/grafana/loki/tree/main/tools/lambda-promtail&quot;&gt;Lambda-promtail&lt;/a&gt;, in turn, allows sending ALB access logs stored in S3 to a Loki endpoint.&lt;/p&gt;
 &lt;p&gt;In this post, I will demonstrate the concept of collecting access log data from several S3 buckets in different spoke accounts with the help of a single lambda-promtail instance running in a hub account. A common occurrence within an enterprise hub and spoke use case is when different teams utilize separate AWS accounts and virtual networks for application delivery. We will use Grafana Cloud (free tier) to receive the data via Grafana’s managed Loki endpoint.&lt;/p&gt;
 &lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out &lt;a href=&quot;https://pulumi.com&quot;&gt;pulumi.com&lt;/a&gt; if you still need to become familiar with it. You can deploy this demo stack using the Pulumi buttons below.&lt;/p&gt;
