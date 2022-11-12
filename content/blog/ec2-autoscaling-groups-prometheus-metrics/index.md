@@ -248,7 +248,7 @@ demo_cwa_configuration = json.dumps({
 					"metric_declaration_dedup":True,
 					"metric_namespace":f"{cluster_name}_Prometheus",
 					"metric_unit":{
-						"process_open_fds":"Count",
+						"node_sockstat_TCP_inuse":"Count",
 						"nginx_connections_waiting":"Count"
 					},
 					"metric_declaration":[
@@ -267,7 +267,7 @@ demo_cwa_configuration = json.dumps({
 								]
 							],
 							"metric_selectors":[
-								"^process_open_fds$"
+								"^node_sockstat_TCP_inuse$"
 							]
 						},
 						{
@@ -366,7 +366,7 @@ demo_prom_loggroup = cloudwatch.LogGroup("demo-cwa-log-group",
 	tags={**general_tags, "Name": "demo-cwa-log-group"}
 )
 ```
-Several noteworthy things happened here. First, we set up the Cloudwatch agent for Prometheus metrics collection. Cloudwatch agent supports standard Prometheus scrape configurations. For example, we are interested in scraping a Node Exporter endpoint on port 9100 and an Nginx Prometheus Exporter endpoint on port 9113. Both jobs will append an "AutoScalingGroupName" tag to the metrics. Second, we configure the ```{"logs":{"metrics_collected":{"prometheus":{}}}}``` stanza to only include "process_open_fds" and "nginx_connections_waiting" in our aggregations since, in this case, we are confident we can make autoscaling decisions based on these metrics alone. Notice that we will aggregate both metrics by "AutoScalingGroupName". Finally, to top it off, let's add the built-in memory reporting inside the ```{"metrics":{"metrics_collected":{"mem":{}}}}``` stanza - it's always nice to stay on top of our memory utilization.
+Several noteworthy things happened here. First, we set up the Cloudwatch agent for Prometheus metrics collection. Cloudwatch agent supports standard Prometheus scrape configurations. For example, we are interested in scraping a Node Exporter endpoint on port 9100 and an Nginx Prometheus Exporter endpoint on port 9113. Both jobs will append an "AutoScalingGroupName" tag to the metrics. Second, we configure the ```{"logs":{"metrics_collected":{"prometheus":{}}}}``` stanza to only include "node_sockstat_TCP_inuse" and "nginx_connections_waiting" in our aggregations since, in this case, we are confident we can make autoscaling decisions based on these metrics alone. Notice that we will aggregate both metrics by "AutoScalingGroupName". Finally, to top it off, let's add the built-in memory reporting inside the ```{"metrics":{"metrics_collected":{"mem":{}}}}``` stanza - it's always nice to stay on top of our memory utilization.
 
 With our Cloudwatch agent configuration sorted, let's move on to our EC2 user data.
 
@@ -452,16 +452,120 @@ Generate some continuous GET requests to the Application Load Balancer public DN
 ![Cloudwatch Custom Namespaces](./cw-namespaces.png)
 
 ##### Nginx Metric:
-![Nginx Metric](./nginx-conn-waiting.png)
+![Nginx Metric](./nginx-metric.png)
 
 ##### Node Exporter Metric:
-![Node Exporter Metric](./open-files.png)
+![Node Exporter Metric](./node-exporter-metric.png)
 
 ##### High-cardinality Log Streams
 ![High-cardinality Log Streams](./log-streams.png)
 
 ## Target Tracking Scaling Policies
 
+Let's imagine a hypothetical situation where we are sure that ```nginx_connections_waiting``` and ```node_sockstat_TCP_inuse``` should have the following average values across our instances in the autoscaling group during production operation at baseline. We are deliberately using some ridiculous values here for the sake of the demo:
 
+```python
+target_nginx_connections_waiting = 2
+target_node_sockstat_TCP_inuse = 50
+```
 
->Work in progress
+To quote the official documentation:
+>To create a target tracking scaling policy, you specify an Amazon CloudWatch metric and a target value that represents the ideal average utilization or throughput level for your application. Amazon EC2 Auto Scaling can then scale out your group (add more instances) to handle peak traffic, and scale in your group (run fewer instances) to reduce costs during periods of low utilization or throughput.
+
+To achieve this, we will define two Target Tracking scaling policies:
+
+```python
+"""
+scaling_policies.py
+"""
+# Define target tracking scaling policies:
+nginx_tracking_policy = autoscaling.Policy("demo-nginx-tracking-policy",
+    autoscaling_group_name=demo_autoscaling_group.name,
+    estimated_instance_warmup=10,
+    policy_type="TargetTrackingScaling",
+    target_tracking_configuration=autoscaling.PolicyTargetTrackingConfigurationArgs(
+        target_value=target_nginx_connections_waiting,
+        disable_scale_in=False,
+        customized_metric_specification=autoscaling.PolicyTargetTrackingConfigurationCustomizedMetricSpecificationArgs(
+            metric_name="nginx_connections_waiting",
+            namespace=f"{cluster_name}_Prometheus",
+            statistic="Average",
+            unit="Count",
+            metric_dimensions=[
+                autoscaling.PolicyTargetTrackingConfigurationCustomizedMetricSpecificationMetricDimensionArgs(
+                    name="AutoScalingGroupName",
+                    value=f"{cluster_name}"
+                )
+            ]
+        )
+    )
+)
+
+netstat_tracking_policy = autoscaling.Policy("demo-netstat-tracking-policy",
+    autoscaling_group_name=demo_autoscaling_group.name,
+    estimated_instance_warmup=10,
+    policy_type="TargetTrackingScaling",
+    target_tracking_configuration=autoscaling.PolicyTargetTrackingConfigurationArgs(
+        target_value=target_node_sockstat_TCP_inuse,
+        disable_scale_in=False,
+        customized_metric_specification=autoscaling.PolicyTargetTrackingConfigurationCustomizedMetricSpecificationArgs(
+            metric_name="node_sockstat_TCP_inuse",
+            namespace=f"{cluster_name}_Prometheus",
+            statistic="Average",
+            unit="Count",
+            metric_dimensions=[
+                autoscaling.PolicyTargetTrackingConfigurationCustomizedMetricSpecificationMetricDimensionArgs(
+                    name="AutoScalingGroupName",
+                    value=f"{cluster_name}"
+                )
+            ]
+        )
+    )
+)
+```
+The policies are visible in the Autoscaling Group user interface:
+
+![Autoscaling Policies](./policies.png)
+
+After several minutes of inactivity and initial data gathering, our Cloudwatch alarms have traced our idle state. The warnings now indicate that we are over-provisioned, running at minimum capacity:
+
+![Cloudwatch Alarms](./alarms.png)
+
+## Load Testing
+
+Out Autoscaling Group is now at its minimum capacity of two, with eight instances of maximum allowed capacity.
+Let us now test our scale-out and scale-in policies by running a basic load test with the help of Locust:
+
+```python
+"""
+./load-test/locustfile.py
+"""
+from locust import HttpUser, task
+            
+class User(HttpUser):
+    @task
+    def mainPage(self):
+        self.client.get("/")
+```
+
+![Start Locust](./locust-start.png)
+
+Soon enough, we shall see a scale-out event:
+
+![Scale-out events](./scale-out.png)
+
+The total number of instances is now eight:
+
+![Scale-out instances](./scale-out-instances.png)
+
+Let's stop the load test and wait for the scale-in event. It should take around fifteen minutes, according to the Cloudwatch alarm:
+
+![Scale-in events](./scale-in.png)
+
+## Summing It All Up
+
+We successfully demonstrated that it is possible to effectively manage the EC2 instance capacity of an Autoscaling Group using metrics scraped from various Prometheus exporters - this means implementing autoscaling policies based on application-level metrics in a real-world production scenario.
+
+## Cleaning Up
+
+Clean up by running ```pulumi destroy```. Happy autoscaling!
