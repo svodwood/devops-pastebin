@@ -11,6 +11,8 @@ What's up with eBPF? You are likely familiar with the technology and might have 
 
 >At the foundation of Cilium is a new Linux kernel technology called eBPF, which enables the dynamic insertion of powerful security, visibility, and networking control logic into the Linux kernel. eBPF provides high-performance networking, multi-cluster and multi-cloud capabilities, advanced load balancing, transparent encryption, extensive network security capabilities, transparent observability, and much more.
 
+![Cilium](./cilium.png)
+
 From the 1.12 release onwards, Cilium has become an all-in-one tool encompassing an integrated ingress controller with Layer 7 load-balancing, sidecar-free service mesh, the possibility to inject Envoy configuration anywhere in the network and many other cool features.
 
 We will not get deep into the inner workings of eBPF in this post. Instead, we will build on top of the Pulumi automation we reviewed in [Part 1](https://svodwood.github.io/devops-pastebin/eks-part-one-karpenter-flux/) of the EKS series and operationalize a bare EKS cluster with Cilium, replacing the default AWS kube-proxy and VPC CNI. No Fargate this time. Additionally, there will be a separate EKS series post on Cilium's implementation (and extension) of standard Kubernetes NetworkPolicy.
