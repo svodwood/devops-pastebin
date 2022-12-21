@@ -14,7 +14,7 @@ I'm going to start small with the first post of what hopefully will become a ser
 
 Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out pulumi.com if you still need to become familiar with it. You can deploy this demo stack using the Pulumi button below.
 
-[![Deploy](https://get.pulumi.com/new/button.svg)](https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-eks-karpenter-flux/tree/main)
+[![Deploy](https://get.pulumi.com/new/button.svg)](https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-eks-karpenter-flux)
 
 You may find the source code for this demo in [this Github repo](https://github.com/svodwood/pulumi-eks-karpenter-flux). A sample Flux configuration repository for this project [is here](https://github.com/svodwood/eks-1-flux-config-repo).
 
@@ -718,7 +718,7 @@ spec:
 Let's quickly install it from the command line, scale out our deployment and observe Karpenter in action:
 ```bash
 kubectl apply -f inflate.yaml
-kubectl kubectl scale deployment inflate --replicas 5
+kubectl scale deployment inflate --replicas 5
 kubectl logs -f -n karpenter -l app.kubernetes.io/name=karpenter -c controller
 ```
 In a matter of seconds, we will observe a scaling-out event. Success!
