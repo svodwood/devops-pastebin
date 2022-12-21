@@ -1,9 +1,625 @@
-<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Tue, 29 Nov 2022 16:22:07 GMT</lastBuildDate><item><title><![CDATA[EKS Series Part 1. Operationalizing EKS with Karpenter and Flux]]></title><description><![CDATA[Introduction A good chunk of my work revolves around Kubernetes clusters on AWS. Recently, I’ve been planning to create a series of posts on…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/eks-part-one-karpenter-flux/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/eks-part-one-karpenter-flux/</guid><pubDate>Tue, 29 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Gatsby Starter Blog RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io</link><generator>GatsbyJS</generator><lastBuildDate>Wed, 21 Dec 2022 21:04:53 GMT</lastBuildDate><item><title><![CDATA[EKS Series Part 2. All That eBPF: Operationalizing EKS with Cilium, Karpenter and Flux]]></title><description><![CDATA[Introduction What’s up with eBPF? You are likely familiar with the technology and might have heard about Cilium before from observing the…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/eks-part-two-cilium-karpenter-flux/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/eks-part-two-cilium-karpenter-flux/</guid><pubDate>Thu, 22 Dec 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+&lt;p&gt;What’s up with eBPF? You are likely familiar with the technology and might have heard about &lt;a href=&quot;https://cilium.io&quot;&gt;Cilium&lt;/a&gt; before from observing the CNCF landscape. &lt;a href=&quot;https://anywhere.eks.amazonaws.com/&quot;&gt;EKS Anywhere&lt;/a&gt; uses that for pod networking and security, in case you did not know! If not, it’s probably best to introduce Cilium by quoting the product website:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Cilium is an open-source project to provide networking, security, and observability for cloud-native environments such as Kubernetes clusters and other container orchestration platforms.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;blockquote&gt;
+&lt;p&gt;At the foundation of Cilium is a new Linux kernel technology called eBPF, which enables the dynamic insertion of powerful security, visibility, and networking control logic into the Linux kernel. eBPF provides high-performance networking, multi-cluster and multi-cloud capabilities, advanced load balancing, transparent encryption, extensive network security capabilities, transparent observability, and much more.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;From the 1.12 release onwards, Cilium has become an all-in-one tool encompassing an integrated ingress controller with Layer 7 load-balancing, sidecar-free service mesh, the possibility to inject Envoy configuration anywhere in the network and many other cool features.&lt;/p&gt;
+&lt;p&gt;We will not get deep into the inner workings of eBPF in this post. Instead, we will build on top of the Pulumi automation we reviewed in &lt;a href=&quot;https://svodwood.github.io/devops-pastebin/eks-part-one-karpenter-flux/&quot;&gt;Part 1&lt;/a&gt; of the EKS series and operationalize a bare EKS cluster with Cilium, replacing the default AWS kube-proxy and VPC CNI. No Fargate this time. Additionally, there will be a separate EKS series post on Cilium’s implementation (and extension) of standard Kubernetes NetworkPolicy.&lt;/p&gt;
+&lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out pulumi.com if you still need to become familiar with it. You can deploy this demo stack using the Pulumi button below.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-eks-cilium&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;You may find the source code for this demo in &lt;a href=&quot;https://github.com/svodwood/pulumi-eks-cilium&quot;&gt;this Github repo&lt;/a&gt;. A sample Flux configuration repository for this project &lt;a href=&quot;https://github.com/svodwood/eks-2-flux-config-repo&quot;&gt;is here&lt;/a&gt;.&lt;/p&gt;
+&lt;h2&gt;What We Are Going To Build&lt;/h2&gt;
+&lt;p&gt;We will spin up a demo VPC and a Cilium-enabled EKS cluster. We will additionally create the necessary IAM roles for service accounts to run Cilium and Karpenter in the cluster. Finally, we will initialize a demo workload to check Cilium features using Flux as our GitOps engine.&lt;/p&gt;
+&lt;p&gt;To start building, we are going to need to meet the prerequisites:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;An AWS account with a named AWS CLI profile configured.&lt;/li&gt;
+&lt;li&gt;A working Pulumi environment.&lt;/li&gt;
+&lt;li&gt;A GitHub repo to set up the GitOps flow powered by Flux.&lt;/li&gt;
+&lt;li&gt;A GitHub personal access token.&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://fluxcd.io/flux/cmd/&quot;&gt;FluxCLI&lt;/a&gt; installed locally.&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://github.com/cilium/cilium-cli&quot;&gt;Cilium CLI&lt;/a&gt; installed locally.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2&gt;Flux Configuration Repository Set-up&lt;/h2&gt;
+&lt;p&gt;Before launching our Pulumi template, we must set up a Flux repository. This repository will hold all definitions of things running inside our EKS cluster on the applicative level. The demo template assumes we are using a personal public repo on GitHub. Because we will not be using EKS Fargate for this demo, Flux will bootstrap itself as expected without any intervention.&lt;/p&gt;
+&lt;h2&gt;Pulumi Stack: Basic Infrastructure&lt;/h2&gt;
+&lt;p&gt;As before, we will construct a VPC consisting of public subnets, private subnets for the Kubernetes worker nodes, and dedicated subnets for the EKS Control Plane network interfaces. However, we will only focus on this a little in this particular post since we are re-using the previous stack’s components, covered in &lt;a href=&quot;https://svodwood.github.io/devops-pastebin/eks-part-one-karpenter-flux/&quot;&gt;Part 1&lt;/a&gt;. We should still end up with the following:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;A couple of public subnets for our ingress endpoints.&lt;/li&gt;
+&lt;li&gt;A couple of private subnets for our nodes.&lt;/li&gt;
+&lt;li&gt;A couple of private subnets for our EKS control plane network interfaces.&lt;/li&gt;
+&lt;li&gt;Several VPC endpoints to facilitate network connectivity between our EKS cluster and AWS API in a secure fashion.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2&gt;Pulumi Stack: EKS, Cilium, Karpenter, Flux Bootstrap&lt;/h2&gt;
+&lt;p&gt;First, we will highlight several IAM objects necessary to construct our working EKS environment, namely:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;An EKS service role.&lt;/li&gt;
+&lt;li&gt;An IAM role for the cilium-controller service account.&lt;/li&gt;
+&lt;li&gt;A Karpenter-managed node role and instance profile.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Second, we will spin up an EKS cluster without Fargate profiles. Karpenter namespace is to be created as part of the cluster provisioning routine - bootstrapping the cluster to a minimal working state can be outsourced to Operations and subsequently passed to a development team for consumption. In this example, the development teams, in turn, can adopt the cluster using the established GitOps workflow. In addition, ops teams may use role-based access control to restrict the manipulation of resources in these “operations-managed” namespaces. Additionally, we will create a patch to disable the “aws-node” DaemonSet - we want to outsource proxying capability to Cilium completely.&lt;/p&gt;
+&lt;p&gt;To install Cilium, we need a node group. To initialize a node group, we need functioning CNI software. It’s a chicken and egg situation, but thankfully, Pulumi will carry out our tasks in parallel to bring everything up eventually. Finally, a Flux bootstrap job will create all Flux controllers in our EKS cluster and set up a connection with our configuration GitHub repository:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Shared EKS resources
+&quot;&quot;&quot;&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create an EKS cluster role:&lt;/span&gt;
+eks_iam_role_policy_arns &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonEKSClusterPolicy&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonEKSVPCResourceController&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+eks_iam_role &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; create_iam_role&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;-eks-role&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Service&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;eks.amazonaws.com&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; eks_iam_role_policy_arns&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a default node role for Karpenter:&lt;/span&gt;
+karpenter_default_nodegroup_role_policy_arns &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Cilium CNI service account policies:&lt;/span&gt;
+cni_service_account_policy_arns &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a default demo EKS cluster nodegroup security group:&lt;/span&gt;
+demo_nodegroup_security_group &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;custom-node-attach-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt; custom node security group&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;custom-node-attach-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;karpenter.sh/discovery&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_nodegroup_security_group_inbound_custom_cidrs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupRule&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;inbound-eks-node-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ingress&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;443&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;443&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;tcp&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_group_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_nodegroup_security_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_nodegroup_security_group_oubound_custom_cidrs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupRule&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;outbound-eks-node-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;egress&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_group_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_nodegroup_security_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a default demo EKS cluster security group:&lt;/span&gt;
+demo_cluster_security_group &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;custom-cluster-attach-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt; custom security group&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;custom-cluster-attach-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_cluster_security_group_inbound_custom_cidrs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupRule&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;inbound-eks-cp-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ingress&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;443&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;443&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;tcp&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_group_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_cluster_security_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_cluster_security_group_oubound_custom_cidrs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupRule&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;outbound-eks-cp-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;egress&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_group_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_cluster_security_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a default Karpenter node role and instance profile:&lt;/span&gt;
+karpenter_node_role &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; create_iam_role&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;KarpenterNodeRole-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Service&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;ec2.amazonaws.com&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; karpenter_default_nodegroup_role_policy_arns&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+karpenter_instance_profile &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;InstanceProfile&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;KarpenterNodeInstanceProfile-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;karpenter_node_role&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;name&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;KarpenterNodeInstanceProfile-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create an EKS log group:&lt;/span&gt;
+demo_eks_loggroup &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; cloudwatch&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;LogGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;demo-eks-loggroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; 
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;/aws/eks/&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;/cluster&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    retention_in_days&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Create an EKS control plane
+&quot;&quot;&quot;&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create the cluster control plane:&lt;/span&gt;
+demo_eks_cluster &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; eks_provider&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Cluster&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;eks-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    instance_role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;karpenter_node_role&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cluster_security_group&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_cluster_security_group&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    create_oidc_provider&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    version&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;1.24&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    instance_profile_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;karpenter_instance_profile&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    skip_default_node_group&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;eks_iam_role&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    provider_credential_opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;eks_provider&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;KubeconfigOptionsArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        profile_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;config&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;profile&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    endpoint_private_access&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    endpoint_public_access&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enabled_cluster_log_types&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;api&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;audit&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;authenticator&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;controllerManager&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;scheduler&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    public_access_cidrs&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    subnet_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; s &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; demo_eks_cp_subnets&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    default_addons_to_remove&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;coredns&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;kube-proxy&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;vpc-cni&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    fargate&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            demo_nodegroup_security_group&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            eks_iam_role&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            demo_eks_loggroup
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+demo_eks_cluster_oidc_arn &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;oidc_provider&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn
+demo_eks_cluster_oidc_url &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;oidc_provider&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;url
+
+&lt;span class=&quot;token comment&quot;&gt;# Create an IAM role for Cilium CNI:&lt;/span&gt;
+iam_role_vpc_cni_service_account_role &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; create_oidc_role&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;-cilium&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;kube-system&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; demo_eks_cluster_oidc_arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; demo_eks_cluster_oidc_url&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;cilium-operator&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; cni_service_account_policy_arns&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+export&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;cilium-oidc-role-arn&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; iam_role_vpc_cni_service_account_role&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a Karpenter IAM role scoped to karpenter namespace:&lt;/span&gt;
+iam_role_karpenter_controller_policy &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; create_policy&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;-karpenter-policy&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;karpenter_oidc_role_policy.json&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+iam_role_karpenter_controller_service_account_role &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; create_oidc_role&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;-karpenter&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;karpenter&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; demo_eks_cluster_oidc_arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; demo_eks_cluster_oidc_url&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;karpenter&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;iam_role_karpenter_controller_policy&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+export&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;karpenter-oidc-role-arn&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; iam_role_karpenter_controller_service_account_role&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a kubernetes provider:&lt;/span&gt;
+role_provider &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Provider&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;-kubernetes-provider&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    kubeconfig&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;kubeconfig&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_server_side_apply&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Patch the aws-node DaemonSet to make sure it&apos;s unshedulable to any node in the cluster, using server side apply:&lt;/span&gt;
+patch_aws_node &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;apps&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;DaemonSetPatch&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;aws-node-patch&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    metadata&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;meta&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ObjectMetaPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        annotations&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;pulumi.com/patchForce&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;true&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;aws-node&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        namespace&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;kube-system&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    spec&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;apps&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;DaemonSetSpecPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        template&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PodTemplateSpecPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            spec&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PodSpecPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                affinity&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;AffinityPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                    node_affinity&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;NodeAffinityPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                        required_during_scheduling_ignored_during_execution&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;NodeSelectorPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                            node_selector_terms&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;NodeSelectorTermPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                                match_expressions&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;NodeSelectorRequirementPatchArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                                    key&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;kubernetes.io/os&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                                    operator&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;In&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                                    values&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;no-schedule&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+                                &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+                            &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+                        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+                    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        provider&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;role_provider&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+cluster_endpoint_fqdn &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;endpoint
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Create a managed node group and install Cilium via helm in parallel. A managed nodegroup will fail to reach a &quot;Ready&quot; state 
+without the CNI daemon running and the helm chart will fail to install if no nodes are available. Let the race begin!
+&quot;&quot;&quot;&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a cilium Helm release when the control plane is initialized:&lt;/span&gt;
+cilium_cni_release &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; Release&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;cilium-cni&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ReleaseArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        chart&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;cilium&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        version&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;cilium_release_version&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        namespace&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;kube-system&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        repository_opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;RepositoryOptsArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            repo&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;https://helm.cilium.io&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        values&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;Output&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;all&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;iam_role_vpc_cni_service_account_role&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; cluster_endpoint_fqdn&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;apply&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            &lt;span class=&quot;token keyword&quot;&gt;lambda&lt;/span&gt; args&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;ingressController&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;enabled&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;eni&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;enabled&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;iamRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; args&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;ipam&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;mode&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;eni&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;egressMasqueradeInterfaces&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;eth0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;tunnel&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;disabled&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;loadBalancer&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;algorithm&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;maglev&quot;&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;kubeProxyReplacement&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;strict&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;k8sServiceHost&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; args&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;replace&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;https://&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;hubble&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;relay&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;enabled&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;ui&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;enabled&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;
+                    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        provider&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;role_provider&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; patch_aws_node&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create an initial Nodegroup when the control plane is initialized:&lt;/span&gt;
+initial_managed_nodegroup &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; eks_provider&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ManagedNodeGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;cilium-initial-nodegroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cluster&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    node_group_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;initial-nodegroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    node_role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;karpenter_node_role&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    subnet_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; s &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; demo_private_subnets&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    force_update_version&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ami_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BOTTLEROCKET_ARM_64&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    instance_types&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;t4g.medium&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    scaling_config&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;desired_size&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;min_size&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;max_size&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    capacity_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ON_DEMAND&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;general_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;cilium-initial-nodegroup&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    taints&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;key&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;node.cilium.io/agent-not-ready&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;value&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;true&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;effect&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;NO_EXECUTE&quot;&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; patch_aws_node&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Install CoreDNS addon when the cluster is initialized:&lt;/span&gt;
+core_dns_addon &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; eks&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Addon&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;coredns-addon&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cluster_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    addon_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;coredns&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    addon_version&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;v1.8.7-eksbuild.3&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resolve_conflicts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;OVERWRITE&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;initial_managed_nodegroup&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; cilium_cni_release&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a service account and cluster role binding for flux controller&lt;/span&gt;
+flux_service_account &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ServiceAccount&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;flux-controller-service-account&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    api_version&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;v1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    kind&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ServiceAccount&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    metadata&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;meta&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ObjectMetaArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;flux-controller&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        namespace&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;kube-system&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        provider&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;role_provider&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+flux_controller_cluster_role_binding &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;rbac&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ClusterRoleBinding&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;flux-controller-sa-crb&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    role_ref&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;rbac&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RoleRefArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        api_group&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;rbac.authorization.k8s.io&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        kind&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ClusterRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;cluster-admin&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    subjects&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+        k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;rbac&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SubjectArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            kind&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ServiceAccount&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;flux-controller&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            namespace&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;kube-system&quot;&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        provider&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;role_provider&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create the bootstrap job for flux-cli&lt;/span&gt;
+flux_bootstrap_job &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;batch&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Job&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;fluxBootstrapJob&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        provider&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;role_provider&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;flux_service_account&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; flux_controller_cluster_role_binding&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; core_dns_addon&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    metadata&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;meta&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ObjectMetaArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;flux-bootstrap-job&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        namespace&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;kube-system&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        annotations&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;pulumi.com/replaceUnready&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;true&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    spec&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;batch&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;JobSpecArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        backoff_limit&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;3&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        template&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PodTemplateSpecArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            spec&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PodSpecArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                service_account_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;flux-controller&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                containers&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ContainerArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                    env&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;outputs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;EnvVar&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                        name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GITHUB_TOKEN&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        value&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;flux_github_token
+                    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    command&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;flux&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;bootstrap&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;github&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;--owner=&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;flux_github_repo_owner&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;--repository=&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;flux_github_repo_name&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;--path=./clusters/&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;cluster_descriptor&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;--private=false&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;--personal=true&quot;&lt;/span&gt;
+                    &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    image&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;fluxcd/flux-cli:v&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;flux_cli_version&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;flux-bootstrap&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                restart_policy&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;OnFailure&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# Create a karpenter namespace:&lt;/span&gt;
+karpenter_namespace &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; k8s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;core&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;v1&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Namespace&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;karpenter-namespace&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    metadata&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;karpenter&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        provider&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;role_provider&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;demo_eks_cluster&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;When the stack is up, let’s go ahead and add Karpenter to our Flux configuration repository. This time, we will create all the necessary files and push them to the repo:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 616px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/d89a5edcab63c71a445fed59bfbb4e10/40040/flux-repo.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 119.62025316455697%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAYCAYAAAD6S912AAAACXBIWXMAABYlAAAWJQFJUiTwAAACeElEQVQ4y5WU3XKjMAyF8/7vtt3ubkLA/BiwIUAw2AbSy7MjpdBmurMlFxqRxP5yJB1xGAeDIpcopMSlrlDmEqosOCdCIJcZhwhD0NnbMmOePJ/RquS7Xdugv3Z855A3A/7EBX6GKYJM4zXM8CuSeAkSvAQxXqOMv/sRxEh0C208KjPhlCmcZYVTqiBUA1E2zDkMzqMzA2SpEUQCcZajrGqcRYwkyxGEAlGSIs0LvP4+QtUXWD/DTgscxbzATjOHm284zNMEa0dUWiGXEpXWkFmGJI4xGIOFS5wwTZ7zGvT5S3iPwzRNcM6ha68oigI5RZ4jyzK0bYu+7zmGYeBMZ+mO9x6eMj9/5DvQegxXy5A0TXG5XJAkCYQQWw7DkIPA8zwzcGKlj7EBzXVkIEVZlqxSa404jmGtxe12Y9Cq7l+wD6Dz6LsBUkoOglEmtdSGuq7Rdd23sA1orWNgVVUMWaH0TDmKIihV/rfUB+DYO7RNiySJuWcUBCMQqXt7e8OyLN/CGEiHaHpKKe4f9YxUGXOfLE2VJ7oDtgGNMdwrUkVQAq4H6PcVugt476FFXVesjsqlTH1c7XI6nXA8HvmPv+vju20c2ybPJfeN1K5B6la77FZItjH9wABS+Nk6pIoq4At7hsJTtiO0VlvJFDRdylQq9XWPZR42hVavVCX3bTU4gajkvZZ5LLkbeNVWYxOM8jMTfgd62NFiNHbz4ue127NuD8Du2uMUJlwu2YOABKIynyl1A1rbo2kEtK7ZMufzmd82e4fwBeicQdslUEqzOhoK9fKZdXsAmtEhUh2EiO5bEQRsHwLTjj+rlHfZebft7DrVZ6e7Av8CJqoKiEc+asQAAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Karpenter Configuration in Flux repository&quot;
+        title=&quot;Karpenter Configuration in Flux repository&quot;
+        src=&quot;/devops-pastebin/static/d89a5edcab63c71a445fed59bfbb4e10/40040/flux-repo.png&quot;
+        srcset=&quot;/devops-pastebin/static/d89a5edcab63c71a445fed59bfbb4e10/c26ae/flux-repo.png 158w,
+/devops-pastebin/static/d89a5edcab63c71a445fed59bfbb4e10/6bdcf/flux-repo.png 315w,
+/devops-pastebin/static/d89a5edcab63c71a445fed59bfbb4e10/40040/flux-repo.png 616w&quot;
+        sizes=&quot;(max-width: 616px) 100vw, 616px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;We create a single file &lt;code class=&quot;language-text&quot;&gt;karpenter.yaml&lt;/code&gt; in the cluster’s directory to map the dependency between Karpenter’s Helm release and the Provisioner:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;yaml&quot;&gt;&lt;pre class=&quot;language-yaml&quot;&gt;&lt;code class=&quot;language-yaml&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;---&lt;/span&gt;
+&lt;span class=&quot;token key atrule&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; kustomize.toolkit.fluxcd.io/v1beta2
+&lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; Kustomization
+&lt;span class=&quot;token key atrule&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;release
+  &lt;span class=&quot;token key atrule&quot;&gt;namespace&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; flux&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;system
+&lt;span class=&quot;token key atrule&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;interval&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 5m
+  &lt;span class=&quot;token key atrule&quot;&gt;retryInterval&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 1m
+  &lt;span class=&quot;token key atrule&quot;&gt;timeout&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 10m
+  &lt;span class=&quot;token key atrule&quot;&gt;sourceRef&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; GitRepository
+    &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; flux&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;system
+  &lt;span class=&quot;token key atrule&quot;&gt;path&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; ./karpenter/karpenter&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;release
+  &lt;span class=&quot;token key atrule&quot;&gt;prune&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean important&quot;&gt;true&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;wait&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean important&quot;&gt;true&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;---&lt;/span&gt;
+&lt;span class=&quot;token key atrule&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; kustomize.toolkit.fluxcd.io/v1beta2
+&lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; Kustomization
+&lt;span class=&quot;token key atrule&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;provisioners
+  &lt;span class=&quot;token key atrule&quot;&gt;namespace&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; flux&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;system
+&lt;span class=&quot;token key atrule&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;dependsOn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;release
+  &lt;span class=&quot;token key atrule&quot;&gt;interval&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 5m
+  &lt;span class=&quot;token key atrule&quot;&gt;retryInterval&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 1m
+  &lt;span class=&quot;token key atrule&quot;&gt;timeout&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 10m
+  &lt;span class=&quot;token key atrule&quot;&gt;sourceRef&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; GitRepository
+    &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; flux&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;system
+  &lt;span class=&quot;token key atrule&quot;&gt;path&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; ./karpenter/karpenter&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;provisioner
+  &lt;span class=&quot;token key atrule&quot;&gt;prune&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean important&quot;&gt;true&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;wait&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean important&quot;&gt;true&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;We place the actual Flux definitions in the root of our configuration repository.&lt;/p&gt;
+&lt;p&gt;Contents of &lt;code class=&quot;language-text&quot;&gt;./karpenter/karpenter-release/source.yaml&lt;/code&gt;:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;yaml&quot;&gt;&lt;pre class=&quot;language-yaml&quot;&gt;&lt;code class=&quot;language-yaml&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;---&lt;/span&gt;
+&lt;span class=&quot;token key atrule&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; source.toolkit.fluxcd.io/v1beta2
+&lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; HelmRepository
+&lt;span class=&quot;token key atrule&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+  &lt;span class=&quot;token key atrule&quot;&gt;namespace&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+&lt;span class=&quot;token key atrule&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;interval&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 1m
+  &lt;span class=&quot;token key atrule&quot;&gt;url&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; oci&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;//public.ecr.aws/karpenter
+  &lt;span class=&quot;token key atrule&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; oci&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Contents of &lt;code class=&quot;language-text&quot;&gt;./karpenter/karpenter-release/release.yaml&lt;/code&gt;:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;yaml&quot;&gt;&lt;pre class=&quot;language-yaml&quot;&gt;&lt;code class=&quot;language-yaml&quot;&gt;&lt;span class=&quot;token key atrule&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; helm.toolkit.fluxcd.io/v2beta1
+&lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; HelmRelease
+&lt;span class=&quot;token key atrule&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+  &lt;span class=&quot;token key atrule&quot;&gt;namespace&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+&lt;span class=&quot;token key atrule&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;targetNamespace&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+  &lt;span class=&quot;token key atrule&quot;&gt;interval&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 5m
+  &lt;span class=&quot;token key atrule&quot;&gt;chart&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;chart&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+      &lt;span class=&quot;token key atrule&quot;&gt;version&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; v0.19.2
+      &lt;span class=&quot;token key atrule&quot;&gt;sourceRef&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+        &lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; HelmRepository
+        &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+        &lt;span class=&quot;token key atrule&quot;&gt;namespace&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter
+      &lt;span class=&quot;token key atrule&quot;&gt;interval&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 10m
+  &lt;span class=&quot;token key atrule&quot;&gt;values&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;replicas&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;serviceAccount&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;create&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean important&quot;&gt;true&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;karpenter&quot;&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;annotations&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+        &lt;span class=&quot;token key atrule&quot;&gt;eks.amazonaws.com/role-arn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; arn&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;aws&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;iam&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;289512055556&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;role/demo&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;cilium&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;karpenter
+    &lt;span class=&quot;token key atrule&quot;&gt;settings&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;aws&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+        &lt;span class=&quot;token key atrule&quot;&gt;clusterName&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;demo-k8s-cilium&quot;&lt;/span&gt;
+        &lt;span class=&quot;token key atrule&quot;&gt;clusterEndpoint&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;https://38FF0DCDA70C42D8F589305FF132A172.gr7.eu-central-1.eks.amazonaws.com&quot;&lt;/span&gt;
+        &lt;span class=&quot;token key atrule&quot;&gt;defaultInstanceProfile&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;KarpenterNodeInstanceProfile-demo-k8s-cilium&quot;&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;logLevel&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; info
+  &lt;span class=&quot;token key atrule&quot;&gt;install&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;crds&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; CreateReplace
+  &lt;span class=&quot;token key atrule&quot;&gt;upgrade&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;crds&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; CreateReplace&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Contents of &lt;code class=&quot;language-text&quot;&gt;./karpenter/karpenter-provisioner/default.yaml&lt;/code&gt;:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;yaml&quot;&gt;&lt;pre class=&quot;language-yaml&quot;&gt;&lt;code class=&quot;language-yaml&quot;&gt;&lt;span class=&quot;token key atrule&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter.sh/v1alpha5
+&lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; Provisioner
+&lt;span class=&quot;token key atrule&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; default
+&lt;span class=&quot;token key atrule&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;labels&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;node-type&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; demo&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;karpenter
+  &lt;span class=&quot;token key atrule&quot;&gt;requirements&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;token key atrule&quot;&gt;key&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;karpenter.sh/capacity-type&quot;&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;operator&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; In
+      &lt;span class=&quot;token key atrule&quot;&gt;values&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;on-demand&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;token key atrule&quot;&gt;key&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;kubernetes.io/arch&quot;&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;operator&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; In
+      &lt;span class=&quot;token key atrule&quot;&gt;values&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;arm64&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;token key atrule&quot;&gt;key&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;node.kubernetes.io/instance-type&quot;&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;operator&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; In
+      &lt;span class=&quot;token key atrule&quot;&gt;values&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;t4g.small&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;t4g.medium&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;t4g.large&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;limits&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;resources&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;cpu&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;10&lt;/span&gt;
+      &lt;span class=&quot;token key atrule&quot;&gt;memory&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; 10Gi
+  &lt;span class=&quot;token key atrule&quot;&gt;providerRef&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; default
+  &lt;span class=&quot;token key atrule&quot;&gt;ttlSecondsAfterEmpty&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;30&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;ttlSecondsUntilExpired&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;43200&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;---&lt;/span&gt;
+&lt;span class=&quot;token key atrule&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; karpenter.k8s.aws/v1alpha1
+&lt;span class=&quot;token key atrule&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; AWSNodeTemplate
+&lt;span class=&quot;token key atrule&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; default
+&lt;span class=&quot;token key atrule&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;token key atrule&quot;&gt;amiFamily&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; Bottlerocket
+  &lt;span class=&quot;token key atrule&quot;&gt;subnetSelector&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;karpenter.sh/discovery&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; demo&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;cilium
+  &lt;span class=&quot;token key atrule&quot;&gt;securityGroupSelector&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;karpenter.sh/discovery&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; demo&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;k8s&lt;span class=&quot;token punctuation&quot;&gt;-&lt;/span&gt;cilium
+  &lt;span class=&quot;token key atrule&quot;&gt;tags&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token key atrule&quot;&gt;Name&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;KarpenterWorkerNode&quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Verify that everything is up and running:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/f2f8c/karpenter.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 21.51898734177215%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAECAYAAACOXx+WAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAt0lEQVQY04XOy27CMBCFYcchtce4UUIE6a68V0VjIlpIyAX6/tKPaqEuWNDFpzMzi6NR0/ee5mtHCHv67sg0dAz9iXN35DoPXKaBeTxznce4/1wmxv5EGz45tIFD29wFmt0Hqtq84Z1n6ZeIOKwI4hyLLCPLXtA65TXPMcZGSqnn3rdbqmpFXdc45yIRiWmMiURsvP3OaZqSJEnMR1pr1Hq9YVWWFEWB9/6vMBZYS+4dpTf/f3Z3A4ftbMHCRu2gAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Karpenter up and running&quot;
+        title=&quot;Karpenter up and running&quot;
+        src=&quot;/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/f058b/karpenter.png&quot;
+        srcset=&quot;/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/c26ae/karpenter.png 158w,
+/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/6bdcf/karpenter.png 315w,
+/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/f058b/karpenter.png 630w,
+/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/40601/karpenter.png 945w,
+/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/78612/karpenter.png 1260w,
+/devops-pastebin/static/acc8cbee7afad3f6adc0fe7395fe75c7/f2f8c/karpenter.png 1490w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h2&gt;Checking out Hubble UI&lt;/h2&gt;
+&lt;p&gt;Let’s go ahead and verify our Cilium installation via Hubble UI by port-forwarding the UI service:&lt;/p&gt;
+&lt;p&gt;&lt;code class=&quot;language-text&quot;&gt;kubectl -n kube-system port-forward svc/hubble-ui 8080:80&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;It looks like everything is in order:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/fc651/hubble.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 50.632911392405056%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAABYlAAAWJQFJUiTwAAABX0lEQVQoz3WQi46kIBBF+f9f3M1OtlsdlEdRIKBO492A2plO75ic3KLq1iOKzjL+DCN+3Xp8DBIf/YCbHNFrjU4pdJNq8UgESdR0MAZ/T48ki4EMfvcjpnsHITVD2QDDGeQzeM5wPp1EkI/gkGA4woeIEI86cWzqqz9UTaA5Q1DIcHFpjxo35uWNiRJCXMDVW3uuWutZTjKErdtCfsN9j+cMRfFl4E9+Yf2x7X/YkKF9RkgLpGIQz+0X/OR/ubDqxbXV+ISRAlyImLQH+wjL85v3u4p7LzFpAx9msD+YtIW2BPYBfOYNMbR1L7mKdQ6OA7QhEHuITzkixYh93xulFHRdB2MMHo/HM7+uG7z3qN9eyjNv4oR1W3C/3WGshXB8mEo5DI9SIKVESunM12Zg2zaEEJ7esh9QNli/VgzDJyw5iElprOvaitfAeiGRa8OuRdfA/VxyDawXLueFSin8A9ehAC303KXPAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;Cilium up and running&quot;
+        title=&quot;Cilium up and running&quot;
+        src=&quot;/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/f058b/hubble.png&quot;
+        srcset=&quot;/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/c26ae/hubble.png 158w,
+/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/6bdcf/hubble.png 315w,
+/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/f058b/hubble.png 630w,
+/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/40601/hubble.png 945w,
+/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/78612/hubble.png 1260w,
+/devops-pastebin/static/3327a82abc8724faccd3fd799780b807/fc651/hubble.png 3016w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h2&gt;Summing It All Up&lt;/h2&gt;
+&lt;p&gt;We successfully initialized an EKS cluster with a managed node group running Cilium, Flux and Karpenter. Cilium acts as a kube-proxy replacement in our specific case. In the next part of the EKS series, we will explore Cilium’s implementation (and extension) of standard Kubernetes NetworkPolicy, ingress capability and Envoy configuration. Stay tuned!&lt;/p&gt;
+&lt;h2&gt;Cleaning Up&lt;/h2&gt;
+&lt;p&gt;Before running &lt;code class=&quot;language-text&quot;&gt;pulumi destroy&lt;/code&gt;, it is best to run &lt;code class=&quot;language-text&quot;&gt;flux uninstall&lt;/code&gt; first to remove all finalizers that might otherwise interfere with the stack’s resources and delete the EC2 instances that Karpenter spun up for us. Then, after Flux is uninstalled and the instances are terminated, run &lt;code class=&quot;language-text&quot;&gt;pulumi destroy&lt;/code&gt; to clean up.&lt;/p&gt;</content:encoded></item><item><title><![CDATA[EKS Series Part 1. Operationalizing EKS with Karpenter and Flux]]></title><description><![CDATA[Introduction A good chunk of my work revolves around Kubernetes clusters on AWS. Recently, I’ve been planning to create a series of posts on…]]></description><link>https://gatsbystarterblogsource.gatsbyjs.io/eks-part-one-karpenter-flux/</link><guid isPermaLink="false">https://gatsbystarterblogsource.gatsbyjs.io/eks-part-one-karpenter-flux/</guid><pubDate>Tue, 29 Nov 2022 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;A good chunk of my work revolves around Kubernetes clusters on AWS. Recently, I’ve been planning to create a series of posts on EKS clusters with different network and security components available in the CNCF ecosystem - a no-thrills overview of service meshes and CNI solutions aimed at operations teams - in the format of ready-made infrastructure as code examples powered by Pulumi.&lt;/p&gt;
 &lt;p&gt;I’m inquisitive about what Cilium will bring us, especially after Release 1.12 and further down the road after CNCF graduation. We may also find a demo use case or two for Linkerd. And so on.&lt;/p&gt;
 &lt;p&gt;I’m going to start small with the first post of what hopefully will become a series - we will operationalize a barebones EKS cluster with &lt;a href=&quot;https://karpenter.sh/v0.19.2/&quot;&gt;Karpenter&lt;/a&gt; and &lt;a href=&quot;https://fluxcd.io/&quot;&gt;Flux&lt;/a&gt;.&lt;/p&gt;
 &lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out pulumi.com if you still need to become familiar with it. You can deploy this demo stack using the Pulumi button below.&lt;/p&gt;
-&lt;p&gt;&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-eks-karpenter-flux/tree/main&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/pulumi-eks-karpenter-flux&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;You may find the source code for this demo in &lt;a href=&quot;https://github.com/svodwood/pulumi-eks-karpenter-flux&quot;&gt;this Github repo&lt;/a&gt;. A sample Flux configuration repository for this project &lt;a href=&quot;https://github.com/svodwood/eks-1-flux-config-repo&quot;&gt;is here&lt;/a&gt;.&lt;/p&gt;
 &lt;h2&gt;What We Are Going To Build&lt;/h2&gt;
 &lt;p&gt;We will spin up a demo VPC and a Fargate-enabled EKS cluster. We will additionally create the necessary IAM roles for service accounts to run Karpenter in the cluster. Finally, we will initialize a demo workload to check cluster autoscaling using Flux as our GitOps engine.&lt;/p&gt;
@@ -661,7 +1277,7 @@ kubectl &lt;span class=&quot;token parameter variable&quot;&gt;-n&lt;/span&gt; k
               &lt;span class=&quot;token key atrule&quot;&gt;cpu&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
 &lt;p&gt;Let’s quickly install it from the command line, scale out our deployment and observe Karpenter in action:&lt;/p&gt;
 &lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;kubectl apply &lt;span class=&quot;token parameter variable&quot;&gt;-f&lt;/span&gt; inflate.yaml
-kubectl kubectl scale deployment inflate &lt;span class=&quot;token parameter variable&quot;&gt;--replicas&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;5&lt;/span&gt;
+kubectl scale deployment inflate &lt;span class=&quot;token parameter variable&quot;&gt;--replicas&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;5&lt;/span&gt;
 kubectl logs &lt;span class=&quot;token parameter variable&quot;&gt;-f&lt;/span&gt; &lt;span class=&quot;token parameter variable&quot;&gt;-n&lt;/span&gt; karpenter &lt;span class=&quot;token parameter variable&quot;&gt;-l&lt;/span&gt; app.kubernetes.io/name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;karpenter &lt;span class=&quot;token parameter variable&quot;&gt;-c&lt;/span&gt; controller&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
 &lt;p&gt;In a matter of seconds, we will observe a scaling-out event. Success!&lt;/p&gt;
 &lt;h2&gt;Cleaning Up&lt;/h2&gt;
