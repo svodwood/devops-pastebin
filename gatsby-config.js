@@ -14,18 +14,11 @@ module.exports = {
   pathPrefix: "/devops-pastebin",
   plugins: [
     {
-      resolve: `gatsby-plugin-google-gtag`,
+      resolve: `gatsby-plugin-gtag`,
       options: {
-        trackingIds: [
-          "G-HKJ4LSENQ9"
-        ],
-        // This object is used for configuration specific to this plugin
-        pluginConfig: {
-          // Puts tracking script in the head instead of the body
-          head: false,
-          // Delays processing pageview events on route update (in milliseconds)
-          delayOnRouteUpdate: 0,
-        },
+        trackingId: "G-HKJ4LSENQ9",
+        head: true,
+        anonymize: true
       },
     },
     `gatsby-plugin-image`,
