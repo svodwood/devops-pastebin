@@ -2209,7 +2209,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: storefront-s3-gw-proxy-svc
+  name: storefront-svc
   namespace: saleor-storefront
 spec:
   selector:
@@ -2244,7 +2244,7 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: storefront-s3-gw-proxy-svc
+            name: storefront-svc
             port:
               number: 3000
 ```
