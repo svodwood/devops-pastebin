@@ -6,13 +6,16 @@ module.exports = {
       summary: `a rock climber, dad, and cloud infrastructure developer working in Israel.`,
     },
     description: `Random thoughts on cloud infrastructure and DevOps.`,
-    siteUrl: `https://gatsbystarterblogsource.gatsbyjs.io/`,
+    siteUrl: `https://s.vodwood.codes/devops-pastebin/`,
     social: {
       linkedin: `vodwood`,
     },
   },
   pathPrefix: "/devops-pastebin",
   plugins: [
+    {
+      resolve: `gatsby-plugin-sitemap`
+    },
     {
       resolve: `gatsby-plugin-gtag`,
       options: {
