@@ -39,38 +39,7 @@
 <p>Separate development teams own the BlueService and the GreenService, respectively - each team has an isolated AWS account where they develop their microservices. An independent team maintains the third application (DirectoryService) and controls access to the application. This application runs in the third isolated AWS account.</p>
 <p>Our network isolation requirements define that the GreenService must not be in the same network as the BlueService. Both services, however, need to perform HTTP GET requests to the DirectoryService - using dedicated query strings.</p>
 <p>Below is the high-level diagram of the landing zone topology and network isolation requirements:</p>
-<p><span
-      class="gatsby-resp-image-wrapper"
-      style="position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; "
-    >
-      <a
-    class="gatsby-resp-image-link"
-    href="/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/d93d9/LatticeSharedServiceDiagram.png"
-    style="display: block"
-    target="_blank"
-    rel="noopener"
-  >
-    <span
-    class="gatsby-resp-image-background-image"
-    style="padding-bottom: 136.0759493670886%; position: relative; bottom: 0; left: 0; background-image: url('data:image/png;base64,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'); background-size: cover; display: block;"
-  ></span>
-  <img
-        class="gatsby-resp-image-image"
-        alt="VPC Lattice Shared Service Topology"
-        title="VPC Lattice Shared Service Topology"
-        src="/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/f058b/LatticeSharedServiceDiagram.png"
-        srcset="/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/c26ae/LatticeSharedServiceDiagram.png 158w,
-/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/6bdcf/LatticeSharedServiceDiagram.png 315w,
-/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/f058b/LatticeSharedServiceDiagram.png 630w,
-/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/40601/LatticeSharedServiceDiagram.png 945w,
-/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/d93d9/LatticeSharedServiceDiagram.png 1243w"
-        sizes="(max-width: 630px) 100vw, 630px"
-        style="width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;"
-        loading="lazy"
-        decoding="async"
-      />
-  </a>
-    </span></p>
+<p><img src="./LatticeSharedServiceDiagram.png" alt="VPC Lattice Shared Service Topology"></p>
 <p>To start building, we are going to need to meet the prerequisites:</p>
 <ol>
 <li>Three separate AWS accounts belong to a single AWS Organization. Additionally, we must enable RAM sharing across the Organization.</li>
@@ -91,12 +60,12 @@
 <li>Another is to control the communication with BlueService.</li>
 </ol>
 <p>We share the Service Networks with the respective microservice accounts via AWS RAM. As such, we provision the stacks in the same order listed above. Once the “common-service” stack is up, note the two VPC Lattice Service Networks - we must use their ARNs in the blue and green stack configurations, respectively. For simplicity, we will not use stack imports here and will copy-paste the correct values of the “common-service” stack output. Also, make a note of the “shared-service-fqdn” output value. Then, copy-paste that into both “blue-service” and “green-service” stack inputs.</p>
-<p>Deploy the Common Service:
-<a href="https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/a-common-service"><img src="https://get.pulumi.com/new/button.svg" alt="Deploy"></a></p>
-<p>Deploy the Blue Service:
-<a href="https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/b-blue-service"><img src="https://get.pulumi.com/new/button.svg" alt="Deploy"></a></p>
-<p>Deploy the Green Service:
-<a href="https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/c-green-service"><img src="https://get.pulumi.com/new/button.svg" alt="Deploy"></a></p>
+<p>Deploy the Common Service:</p>
+<p><a href="https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/a-common-service"><img src="https://get.pulumi.com/new/button.svg" alt="Deploy"></a></p>
+<p>Deploy the Blue Service:</p>
+<p><a href="https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/b-blue-service"><img src="https://get.pulumi.com/new/button.svg" alt="Deploy"></a></p>
+<p>Deploy the Green Service:</p>
+<p><a href="https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/c-green-service"><img src="https://get.pulumi.com/new/button.svg" alt="Deploy"></a></p>
 <h2>Pulumi Stack: Common Service</h2>
 <p>Our “common-service” stack consists of essential VPC components, Lattice-specific network components, AWS RAM shares and a Lambda function running FastAPI. In addition, we use a private Application Load Balancer to front our Lambda function. First, let’s break down the stack.</p>
 <p>Our Pulumi project consists of the following files:</p>
@@ -1005,13 +974,141 @@ blue_function <span class="token operator">=</span> lambda_<span class="token pu
 <p>This is a rudimentary Lambda function to execute a GET request towards our shared service Lattice endpoint.</p>
 <h2>Testing Connectivity</h2>
 <p>You may have noticed that our environments are private, and all Lambda functions reside within their dedicated VPCs, which have no route to WAN. Let’s create a default test execution of our BlueFunction. First, we ensure the BLUE_ENDPOINT environment variable contains the “q=blue” query string:</p>
-<p><img src="/devops-pastebin/844ac503cea08f1f7521b90dbf07df87/BlueLambdaEnvConfig.png" alt="AWS Lambda Blue Configuration Correct"></p>
+<p><span
+      class="gatsby-resp-image-wrapper"
+      style="position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; "
+    >
+      <a
+    class="gatsby-resp-image-link"
+    href="/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/ecfa6/aBlueLambdaEnvConfig.png"
+    style="display: block"
+    target="_blank"
+    rel="noopener"
+  >
+    <span
+    class="gatsby-resp-image-background-image"
+    style="padding-bottom: 46.835443037974684%; position: relative; bottom: 0; left: 0; background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAJCAYAAAAywQxIAAAACXBIWXMAAA7DAAAOwwHHb6hkAAABF0lEQVR42m2SjW6DMAyEef+33LSpa4GE/BGHAbeeSyI6EemDxDZnO6a73R/4+PpGP45w3sPHCB9IeMf7l/84G2sxjAajMTB2ar6OD2stnA8oyy8keaQUkUUgIiilvFFtct6LqBhFOx62bce2beCK/ScmM6g4g9fDTv++71iWpcXWRXuogvM8I2dpQRTY9l2DqgiZ5wyRghAjcs7qW9dV34T2V4WltCz/s17Bq0g5o5RFO2DFFG6Ck3Ow06TcBoPeWN3TGeLFcEJQ+5nX/dHn0fFjisaUMBiLn/sDfT8ghIiUkiLHgCps+UxN1CrM2kJRYf4eGsSMB6wikpQU3uV58pxBE2SL3nnNTMN0tKp75y65ugZt+Sn4B2K7uWgIBRhKAAAAAElFTkSuQmCC'); background-size: cover; display: block;"
+  ></span>
+  <img
+        class="gatsby-resp-image-image"
+        alt="AWS Lambda Blue Configuration Correct"
+        title="AWS Lambda Blue Configuration Correct"
+        src="/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/f058b/aBlueLambdaEnvConfig.png"
+        srcset="/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/c26ae/aBlueLambdaEnvConfig.png 158w,
+/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/6bdcf/aBlueLambdaEnvConfig.png 315w,
+/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/f058b/aBlueLambdaEnvConfig.png 630w,
+/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/40601/aBlueLambdaEnvConfig.png 945w,
+/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/78612/aBlueLambdaEnvConfig.png 1260w,
+/devops-pastebin/static/844ac503cea08f1f7521b90dbf07df87/ecfa6/aBlueLambdaEnvConfig.png 1819w"
+        sizes="(max-width: 630px) 100vw, 630px"
+        style="width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;"
+        loading="lazy"
+        decoding="async"
+      />
+  </a>
+    </span></p>
 <p>Executing the function will produce the desired result:</p>
-<p><img src="/devops-pastebin/d4548e3542c75d1226b76b23697491d1/BlueLambdaEndpointTestSuccess.png" alt="AWS Lambda Blue Test Success"></p>
+<p><span
+      class="gatsby-resp-image-wrapper"
+      style="position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; "
+    >
+      <a
+    class="gatsby-resp-image-link"
+    href="/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/b54cd/aBlueLambdaEndpointTestSuccess.png"
+    style="display: block"
+    target="_blank"
+    rel="noopener"
+  >
+    <span
+    class="gatsby-resp-image-background-image"
+    style="padding-bottom: 49.36708860759494%; position: relative; bottom: 0; left: 0; background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAAA7DAAAOwwHHb6hkAAABGElEQVR42pWS627DIAyF8/6v2XUpEAzmUsiS6kwmpWvS/BnSJ4PPETI2gyGDb6OhrYGadEP2ArH7F449BuVHXM0Fo/2G9gpc3Atf6I/7gaNWCJQsBhsmaFLwieAiwSeHVAPyHPf8pD0nus8Ow8QGim7guwffXSPWgDTvETPnTQ+FP/TuGQxrfOkLpqBhWLX4/uzOaK9NFz+lCVwPnurgssVgvIb2N8SZEarfKB5cttjPNxpho9n7DrhM24ViPjO0Kp6V9GGcVb+rcJInqwu0U5DLG2QgeRmY4DMhzfG0b9Lv3vPWQ5mqVhrWEpi5xRgiaq1YlhXLsuDxeGBd1w8k/75yzRgo2vZdXHry/Dqdfm6ezpsvlvBC8r+Mz/28QK54ywAAAABJRU5ErkJggg=='); background-size: cover; display: block;"
+  ></span>
+  <img
+        class="gatsby-resp-image-image"
+        alt="AWS Lambda Blue Test Success"
+        title="AWS Lambda Blue Test Success"
+        src="/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/f058b/aBlueLambdaEndpointTestSuccess.png"
+        srcset="/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/c26ae/aBlueLambdaEndpointTestSuccess.png 158w,
+/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/6bdcf/aBlueLambdaEndpointTestSuccess.png 315w,
+/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/f058b/aBlueLambdaEndpointTestSuccess.png 630w,
+/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/40601/aBlueLambdaEndpointTestSuccess.png 945w,
+/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/78612/aBlueLambdaEndpointTestSuccess.png 1260w,
+/devops-pastebin/static/d4548e3542c75d1226b76b23697491d1/b54cd/aBlueLambdaEndpointTestSuccess.png 1662w"
+        sizes="(max-width: 630px) 100vw, 630px"
+        style="width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;"
+        loading="lazy"
+        decoding="async"
+      />
+  </a>
+    </span></p>
 <p>Let’s now manually edit the query string within the BLUE_ENDPOINT environment variable:</p>
-<p><img src="/devops-pastebin/d4394d32cd13636ff7028daa5a45bba5/BlueLambdaEnvConfigWrong.png" alt="AWS Lambda Blue Configuration Wrong"></p>
+<p><span
+      class="gatsby-resp-image-wrapper"
+      style="position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; "
+    >
+      <a
+    class="gatsby-resp-image-link"
+    href="/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/807a0/aBlueLambdaEnvConfigWrong.png"
+    style="display: block"
+    target="_blank"
+    rel="noopener"
+  >
+    <span
+    class="gatsby-resp-image-background-image"
+    style="padding-bottom: 50.632911392405056%; position: relative; bottom: 0; left: 0; background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAAA7DAAAOwwHHb6hkAAABNElEQVR42o1Si27DIAzk/79yW9euTUqA8CZJbzqnVN20abN0Amzj80u9Hk94ORxxGUYYa+Hm+d+gv54mXPWEyRgY66CMMRiGQR45F5TaBDnnX1FKQS4FKSXESES5+xCg2rLgdrthXVdQynSCOb8h5oLWmoB2ogt13f/ZVmuF2pkytm3blTkhBo9lWbGsKzoh7SFGlFIlK549YBcJuLNt+Et6FQzMgAzOvyyfoJ5vxZ6IoVZk9q81YeK78n6HlL8sgpQzYsri131pp15xOletZUrvlxGHjzOGcYSeDGbvf56w919t3sM6J1DWWoQQhMk5B621EHjvETnFlNCreEbPrt6zo4/3YV8bjpwGMpCRd/ZI9tLND/08eyHimWR96qOHLJu9VYM2cNaKYr6nLp+/lWv/ueyfPlYHf9MeRLcAAAAASUVORK5CYII='); background-size: cover; display: block;"
+  ></span>
+  <img
+        class="gatsby-resp-image-image"
+        alt="AWS Lambda Blue Configuration Wrong"
+        title="AWS Lambda Blue Configuration Wrong"
+        src="/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/f058b/aBlueLambdaEnvConfigWrong.png"
+        srcset="/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/c26ae/aBlueLambdaEnvConfigWrong.png 158w,
+/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/6bdcf/aBlueLambdaEnvConfigWrong.png 315w,
+/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/f058b/aBlueLambdaEnvConfigWrong.png 630w,
+/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/40601/aBlueLambdaEnvConfigWrong.png 945w,
+/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/78612/aBlueLambdaEnvConfigWrong.png 1260w,
+/devops-pastebin/static/d4394d32cd13636ff7028daa5a45bba5/807a0/aBlueLambdaEnvConfigWrong.png 1652w"
+        sizes="(max-width: 630px) 100vw, 630px"
+        style="width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;"
+        loading="lazy"
+        decoding="async"
+      />
+  </a>
+    </span></p>
 <p>And execute the function one more time:</p>
-<p><img src="/devops-pastebin/57826e5d64a5014fccb7a4314e280e90/BlueLambdaTestForbidden.png" alt="AWS Lambda Blue Test Fail"></p>
+<p><span
+      class="gatsby-resp-image-wrapper"
+      style="position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; "
+    >
+      <a
+    class="gatsby-resp-image-link"
+    href="/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/a5a94/aBlueLambdaTestForbidden.png"
+    style="display: block"
+    target="_blank"
+    rel="noopener"
+  >
+    <span
+    class="gatsby-resp-image-background-image"
+    style="padding-bottom: 50.632911392405056%; position: relative; bottom: 0; left: 0; background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAAA7DAAAOwwHHb6hkAAABMElEQVR42pWPbW+DMAyE+f+/cmthjBI7dngJlCQ3JWW048s2S4/Oji4nu7LM6A2BmUFEhdwzE1QV7h9kfzXdWmhzgWsbrGQQlRHkwSb0Z4IQvCVUExPk1mFkQu69WoR5RPLzQfQT4vwbI7xYVIsKmC1UHbz3WNcVMUaEEA7ynFJCrqxnct23DWIMqtUpDBHe3i+41g0u1xof7Weh+WhxrWuIOjy+4dBzhRjhLKOaLUP6GxwZOCIMTBgtYxJbyHPIJy2+kNYFae/PzPnkmQy0beCpLyxsEAdBGhVpUKTRITqB61pMfVdYLZW38EKeF2FUE/XFvKk9CCdz2AM9m2fAoAdh1+V7w7Hviim9mM4sTLgLP0P20FB6LVeVwLyhtE0xZ/KGd7G7Pt9eg46wH/oI/AL8hwKZD5aIOQAAAABJRU5ErkJggg=='); background-size: cover; display: block;"
+  ></span>
+  <img
+        class="gatsby-resp-image-image"
+        alt="AWS Lambda Blue Test Fail"
+        title="AWS Lambda Blue Test Fail"
+        src="/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/f058b/aBlueLambdaTestForbidden.png"
+        srcset="/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/c26ae/aBlueLambdaTestForbidden.png 158w,
+/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/6bdcf/aBlueLambdaTestForbidden.png 315w,
+/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/f058b/aBlueLambdaTestForbidden.png 630w,
+/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/40601/aBlueLambdaTestForbidden.png 945w,
+/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/78612/aBlueLambdaTestForbidden.png 1260w,
+/devops-pastebin/static/57826e5d64a5014fccb7a4314e280e90/a5a94/aBlueLambdaTestForbidden.png 1657w"
+        sizes="(max-width: 630px) 100vw, 630px"
+        style="width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;"
+        loading="lazy"
+        decoding="async"
+      />
+  </a>
+    </span></p>
 <p>Success! Feel free to perform the same steps with the GreenFunction.</p>
 <h2>Cleaning Up</h2>
 <p>Run “pulumi destroy” on all the stacks in reverse order. Start from “green-service”, then “blue-service”, then “common-service”. Afterwards, delete CloudWatch Lambda log groups from all three accounts manually if needed. Due to AWS’s throttling, you may need to manually delete some VPC Lattice objects and do a “pulumi refresh” instead, although there is usually no need. If you experience throttling, running “pulumi destroy” several times resolves the issue.</p></section><hr/><footer><div class="bio"><div data-gatsby-image-wrapper="" style="width:50px;height:50px" class="gatsby-image-wrapper bio-avatar"><div aria-hidden="true" data-placeholder-image="" style="opacity:1;transition:opacity 500ms linear;background-color:#383838;width:50px;height:50px;position:relative"></div><picture><source type="image/avif" data-srcset="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/d4bf4/profile-pic.avif 50w,/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/ee81f/profile-pic.avif 100w" sizes="50px"/><source type="image/webp" data-srcset="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/3faea/profile-pic.webp 50w,/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/6a679/profile-pic.webp 100w" sizes="50px"/><img data-gatsby-image-ssr="" layout="fixed" data-main-image="" style="opacity:0" sizes="50px" decoding="async" loading="lazy" data-src="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/e5610/profile-pic.png" data-srcset="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/e5610/profile-pic.png 50w,/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/e9b55/profile-pic.png 100w" alt="Profile picture"/></picture><noscript><picture><source type="image/avif" srcSet="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/d4bf4/profile-pic.avif 50w,/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/ee81f/profile-pic.avif 100w" sizes="50px"/><source type="image/webp" srcSet="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/3faea/profile-pic.webp 50w,/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/6a679/profile-pic.webp 100w" sizes="50px"/><img data-gatsby-image-ssr="" layout="fixed" data-main-image="" style="opacity:0" sizes="50px" decoding="async" loading="lazy" src="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/e5610/profile-pic.png" srcSet="/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/e5610/profile-pic.png 50w,/devops-pastebin/static/0a99c64aac5a07989220024ceb35f5c9/e9b55/profile-pic.png 100w" alt="Profile picture"/></picture></noscript><script type="module">const t="undefined"!=typeof HTMLImageElement&&"loading"in HTMLImageElement.prototype;if(t){const t=document.querySelectorAll("img[data-main-image]");for(let e of t){e.dataset.src&&(e.setAttribute("src",e.dataset.src),e.removeAttribute("data-src")),e.dataset.srcset&&(e.setAttribute("srcset",e.dataset.srcset),e.removeAttribute("data-srcset"));const t=e.parentNode.querySelectorAll("source[data-srcset]");for(let e of t)e.setAttribute("srcset",e.dataset.srcset),e.removeAttribute("data-srcset");e.complete&&(e.style.opacity=1,e.parentNode.parentNode.querySelector("[data-placeholder-image]").style.opacity=0)}}</script></div><p>Written by <strong>Sergey Vodwood,</strong> <!-- -->a rock climber, dad, and cloud infrastructure developer working in Israel.<!-- --> <a href="https://linkedin.com/in/vodwood">You should add him on LinkedIn.</a></p></div></footer></article><nav class="blog-post-nav"><ul style="display:flex;flex-wrap:wrap;justify-content:space-between;list-style:none;padding:0"><li><a rel="prev" href="/devops-pastebin/lattice-part-one/">← <!-- -->VPC Lattice Part 1. Overview</a></li><li></li></ul></nav></main><footer>© <!-- -->2023<!-- -->, Built with<!-- --> <a href="https://www.gatsbyjs.com">Gatsby</a></footer></div></div><div id="gatsby-announcer" style="position:absolute;top:0;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0, 0, 0, 0);white-space:nowrap;border:0" aria-live="assertive" aria-atomic="true"></div></div><script id="gatsby-script-loader">/*<![CDATA[*/window.pagePath="/lattice-part-two/";/*]]>*/</script><!-- slice-start id="_gatsby-scripts-1" -->
