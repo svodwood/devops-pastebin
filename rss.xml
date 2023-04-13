@@ -1,4 +1,77 @@
-<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Sergey's DevOps Pastebin RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://s.vodwood.codes/devops-pastebin</link><generator>GatsbyJS</generator><lastBuildDate>Mon, 03 Apr 2023 08:34:57 GMT</lastBuildDate><item><title><![CDATA[VPC Lattice Part 1. Overview]]></title><description><![CDATA[Introduction On the 31st of March 2023, VPC Lattice made General Availability. The new managed service is here to help us create logical…]]></description><link>https://s.vodwood.codes/devops-pastebin/lattice-part-one/</link><guid isPermaLink="false">https://s.vodwood.codes/devops-pastebin/lattice-part-one/</guid><pubDate>Mon, 03 Apr 2023 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Sergey's DevOps Pastebin RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://s.vodwood.codes/devops-pastebin</link><generator>GatsbyJS</generator><lastBuildDate>Thu, 13 Apr 2023 21:39:13 GMT</lastBuildDate><item><title><![CDATA[VPC Lattice Part 2. Connecting Applications to Shared Services]]></title><description><![CDATA[Introduction In Part 1 of the series, we looked at some of the benefits and drawbacks of VPC Lattice and theorized on possible use cases…]]></description><link>https://s.vodwood.codes/devops-pastebin/lattice-part-two/</link><guid isPermaLink="false">https://s.vodwood.codes/devops-pastebin/lattice-part-two/</guid><pubDate>Fri, 14 Apr 2023 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+&lt;p&gt;In Part 1 of the series, we looked at some of the benefits and drawbacks of VPC Lattice and theorized on possible use cases where this managed service might be helpful. We also discussed a “shared service” scenario, where some individual applications may desire access to a shared service while belonging to entirely separate networks. This pattern might present itself with a commonly shared HTTP endpoint - for example, for token generation and validation, tied to a shared encryption infrastructure. While not straightforward, utilizing VPC Lattice to support this topology is possible. Let’s now dive deeper and construct a functional multi-account and multi-VPC mini-landing zone - utilizing VPC Lattice as an application layer network.&lt;/p&gt;
+&lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out pulumi.com if you still need to become familiar with it. You can deploy these demo stacks using the Pulumi buttons below.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Disclaimer #1: in the Pulumi stacks, we use two AWS providers: aws and aws-native, which need separate configurations, e.g., AWS CLI profile name and region. The latter is the only option to work with Lattice from Pulumi. I cannot currently recommend the aws-native provider for production use.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Disclaimer #2: at the time of writing, some requests to VPC Lattice API return 429. AWS is still throttling requests to the service, although this may be related to your account status. Run “pulumi up” one more time if you experience this.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;What We Are Going To Build&lt;/h2&gt;
+&lt;p&gt;Our focus today is on our hypothetical company’s three microservices:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;DirectoryService. A shared microservice.&lt;/li&gt;
+&lt;li&gt;BlueService. A standalone microservice.&lt;/li&gt;
+&lt;li&gt;GreenService. A standalone microservice.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Separate development teams own the BlueService and the GreenService, respectively - each team has an isolated AWS account where they develop their microservices. An independent team maintains the third application (DirectoryService) and controls access to the application. This application runs in the third isolated AWS account.&lt;/p&gt;
+&lt;p&gt;Our network isolation requirements define that the GreenService must not be in the same network as the BlueService. Both services, however, need to perform HTTP GET requests to the DirectoryService - using dedicated query strings.&lt;/p&gt;
+&lt;p&gt;Below is the high-level diagram of the landing zone topology and network isolation requirements:&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto; max-width: 630px; &quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/d93d9/LatticeSharedServiceDiagram.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 136.0759493670886%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,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&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;VPC Lattice Shared Service Topology&quot;
+        title=&quot;VPC Lattice Shared Service Topology&quot;
+        src=&quot;/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/f058b/LatticeSharedServiceDiagram.png&quot;
+        srcset=&quot;/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/c26ae/LatticeSharedServiceDiagram.png 158w,
+/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/6bdcf/LatticeSharedServiceDiagram.png 315w,
+/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/f058b/LatticeSharedServiceDiagram.png 630w,
+/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/40601/LatticeSharedServiceDiagram.png 945w,
+/devops-pastebin/static/d26599aac5a3e0a457e5146fbde011c4/d93d9/LatticeSharedServiceDiagram.png 1243w&quot;
+        sizes=&quot;(max-width: 630px) 100vw, 630px&quot;
+        style=&quot;width:100%;height:100%;margin:0;vertical-align:middle;position:absolute;top:0;left:0;&quot;
+        loading=&quot;lazy&quot;
+        decoding=&quot;async&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;To start building, we are going to need to meet the prerequisites:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Three separate AWS accounts belong to a single AWS Organization. Additionally, we must enable RAM sharing across the Organization.&lt;/li&gt;
+&lt;li&gt;Three configured CLI profiles - for all three accounts, respectively. Mind that the aws:profile and aws-native:profile providers must be configured explicitly and separately. They may, however, reuse the same credentials.&lt;/li&gt;
+&lt;li&gt;A working Pulumi environment.&lt;/li&gt;
+&lt;li&gt;Account IDs of all three AWS accounts.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2&gt;Pulumi Stacks and Deployment Procedures&lt;/h2&gt;
+&lt;p&gt;Our lab repository consists of three directories, each corresponding to a separate Pulumi stack:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;./a-common-service&lt;/li&gt;
+&lt;li&gt;./b-blue-service&lt;/li&gt;
+&lt;li&gt;./c-green-service&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;A “common-service” stack contains the infrastructure for the DirectoryService application deployed to a separate AWS account. This specific account also owns the two independent VPC Lattice Service Networks:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;One is to control the communication with the GreenService.&lt;/li&gt;
+&lt;li&gt;Another is to control the communication with BlueService.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;We share the Service Networks with the respective microservice accounts via AWS RAM. As such, we provision the stacks in the same order listed above. Once the “common-service” stack is up, note the two VPC Lattice Service Networks - we must use their ARNs in the blue and green stack configurations, respectively. For simplicity, we will not use stack imports here and will copy-paste the correct values of the “common-service” stack output. Also, make a note of the “shared-service-fqdn” output value. Then, copy-paste that into both “blue-service” and “green-service” stack inputs.&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; json&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;h2&gt;Cleaning Up&lt;/h2&gt;
+&lt;p&gt;Run “pulumi destroy” on all the stacks in reverse order. Start from “green-service”, then “blue-service”, then “common-service”. Afterwards, delete CloudWatch Lambda log groups from all three accounts manually if needed. Due to AWS’s throttling, you may need to manually delete some VPC Lattice objects and do a “pulumi refresh” instead, although there is usually no need to. If you experience throttling, running “pulumi destroy” several times resolves the issue.&lt;/p&gt;</content:encoded></item><item><title><![CDATA[VPC Lattice Part 1. Overview]]></title><description><![CDATA[Introduction On the 31st of March 2023, VPC Lattice made General Availability. The new managed service is here to help us create logical…]]></description><link>https://s.vodwood.codes/devops-pastebin/lattice-part-one/</link><guid isPermaLink="false">https://s.vodwood.codes/devops-pastebin/lattice-part-one/</guid><pubDate>Mon, 03 Apr 2023 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;On the 31st of March 2023, VPC Lattice made General Availability. The new managed service is here to help us create logical application layer networks across VPCs and isolated AWS accounts. A user &lt;a href=&quot;https://docs.aws.amazon.com/vpc-lattice/index.html&quot;&gt;guide is available&lt;/a&gt;, along with several examples. Throughout several posts, I will present an overview of the offering, some implementation details, and a deep dive into a potential reference architecture. This post is Part 1 of the series on Lattice and does not include an IaC follow-along.&lt;/p&gt;
 &lt;h2&gt;What Is Lattice and Why Do I Need It&lt;/h2&gt;
 &lt;p&gt;Consider the use case: your company’s landing zone on AWS consists of multiple isolated accounts managed from within a single AWS Organization. Each development team is assigned an account to deploy their services. To make service endpoints available for other teams in different AWS accounts to consume, you must ensure network connectivity between these accounts. Service-to-service connectivity is considered east-west traffic that does not leave your internal network boundary. To interconnect, you will consider several standard options:&lt;/p&gt;
