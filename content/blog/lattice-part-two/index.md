@@ -50,12 +50,15 @@ A "common-service" stack contains the infrastructure for the DirectoryService ap
 We share the Service Networks with the respective microservice accounts via AWS RAM. As such, we provision the stacks in the same order listed above. Once the "common-service" stack is up, note the two VPC Lattice Service Networks - we must use their ARNs in the blue and green stack configurations, respectively. For simplicity, we will not use stack imports here and will copy-paste the correct values of the "common-service" stack output. Also, make a note of the "shared-service-fqdn" output value. Then, copy-paste that into both "blue-service" and "green-service" stack inputs.
 
 Deploy the Common Service:
+
 [![Deploy](https://get.pulumi.com/new/button.svg)](https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/a-common-service)
 
 Deploy the Blue Service:
+
 [![Deploy](https://get.pulumi.com/new/button.svg)](https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/b-blue-service)
 
 Deploy the Green Service:
+
 [![Deploy](https://get.pulumi.com/new/button.svg)](https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/c-green-service)
 
 ## Pulumi Stack: Common Service
@@ -1000,19 +1003,19 @@ This is a rudimentary Lambda function to execute a GET request towards our share
 
 You may have noticed that our environments are private, and all Lambda functions reside within their dedicated VPCs, which have no route to WAN. Let's create a default test execution of our BlueFunction. First, we ensure the BLUE_ENDPOINT environment variable contains the "q=blue" query string:
 
-![AWS Lambda Blue Configuration Correct](./BlueLambdaEnvConfig.PNG)
+![AWS Lambda Blue Configuration Correct](./aBlueLambdaEnvConfig.png)
 
 Executing the function will produce the desired result:
 
-![AWS Lambda Blue Test Success](./BlueLambdaEndpointTestSuccess.PNG)
+![AWS Lambda Blue Test Success](./aBlueLambdaEndpointTestSuccess.png)
 
 Let's now manually edit the query string within the BLUE_ENDPOINT environment variable:
 
-![AWS Lambda Blue Configuration Wrong](./BlueLambdaEnvConfigWrong.PNG)
+![AWS Lambda Blue Configuration Wrong](./aBlueLambdaEnvConfigWrong.png)
 
 And execute the function one more time:
 
-![AWS Lambda Blue Test Fail](./BlueLambdaTestForbidden.PNG)
+![AWS Lambda Blue Test Fail](./aBlueLambdaTestForbidden.png)
 
 Success! Feel free to perform the same steps with the GreenFunction.
 
