@@ -1,6 +1,7 @@
-<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Sergey's DevOps Pastebin RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://s.vodwood.codes/devops-pastebin</link><generator>GatsbyJS</generator><lastBuildDate>Thu, 13 Apr 2023 21:39:13 GMT</lastBuildDate><item><title><![CDATA[VPC Lattice Part 2. Connecting Applications to Shared Services]]></title><description><![CDATA[Introduction In Part 1 of the series, we looked at some of the benefits and drawbacks of VPC Lattice and theorized on possible use cases…]]></description><link>https://s.vodwood.codes/devops-pastebin/lattice-part-two/</link><guid isPermaLink="false">https://s.vodwood.codes/devops-pastebin/lattice-part-two/</guid><pubDate>Fri, 14 Apr 2023 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[Sergey's DevOps Pastebin RSS Feed]]></title><description><![CDATA[Random thoughts on cloud infrastructure and DevOps.]]></description><link>https://s.vodwood.codes/devops-pastebin</link><generator>GatsbyJS</generator><lastBuildDate>Thu, 13 Apr 2023 22:51:26 GMT</lastBuildDate><item><title><![CDATA[VPC Lattice Part 2. Connecting Applications to Shared Services]]></title><description><![CDATA[Introduction In Part 1 of the series, we looked at some of the benefits and drawbacks of VPC Lattice and theorized on possible use cases…]]></description><link>https://s.vodwood.codes/devops-pastebin/lattice-part-two/</link><guid isPermaLink="false">https://s.vodwood.codes/devops-pastebin/lattice-part-two/</guid><pubDate>Fri, 14 Apr 2023 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;In Part 1 of the series, we looked at some of the benefits and drawbacks of VPC Lattice and theorized on possible use cases where this managed service might be helpful. We also discussed a “shared service” scenario, where some individual applications may desire access to a shared service while belonging to entirely separate networks. This pattern might present itself with a commonly shared HTTP endpoint - for example, for token generation and validation, tied to a shared encryption infrastructure. While not straightforward, utilizing VPC Lattice to support this topology is possible. Let’s now dive deeper and construct a functional multi-account and multi-VPC mini-landing zone - utilizing VPC Lattice as an application layer network.&lt;/p&gt;
 &lt;p&gt;Pulumi IaC will help us bring up our infrastructure on the AWS Cloud. Check out pulumi.com if you still need to become familiar with it. You can deploy these demo stacks using the Pulumi buttons below.&lt;/p&gt;
+&lt;p&gt;You may find the source code for this demo in &lt;a href=&quot;https://github.com/svodwood/vpc-lattice-lab-1&quot;&gt;this Github repo&lt;/a&gt;.&lt;/p&gt;
 &lt;blockquote&gt;
 &lt;p&gt;Disclaimer #1: in the Pulumi stacks, we use two AWS providers: aws and aws-native, which need separate configurations, e.g., AWS CLI profile name and region. The latter is the only option to work with Lattice from Pulumi. I cannot currently recommend the aws-native provider for production use.&lt;/p&gt;
 &lt;/blockquote&gt;
@@ -69,9 +70,930 @@
 &lt;li&gt;Another is to control the communication with BlueService.&lt;/li&gt;
 &lt;/ol&gt;
 &lt;p&gt;We share the Service Networks with the respective microservice accounts via AWS RAM. As such, we provision the stacks in the same order listed above. Once the “common-service” stack is up, note the two VPC Lattice Service Networks - we must use their ARNs in the blue and green stack configurations, respectively. For simplicity, we will not use stack imports here and will copy-paste the correct values of the “common-service” stack output. Also, make a note of the “shared-service-fqdn” output value. Then, copy-paste that into both “blue-service” and “green-service” stack inputs.&lt;/p&gt;
-&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; json&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Deploy the Common Service:
+&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/a-common-service&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Deploy the Blue Service:
+&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/b-blue-service&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Deploy the Green Service:
+&lt;a href=&quot;https://app.pulumi.com/new?template=https://github.com/svodwood/vpc-lattice-lab-1/tree/main/c-green-service&quot;&gt;&lt;img src=&quot;https://get.pulumi.com/new/button.svg&quot; alt=&quot;Deploy&quot;&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;h2&gt;Pulumi Stack: Common Service&lt;/h2&gt;
+&lt;p&gt;Our “common-service” stack consists of essential VPC components, Lattice-specific network components, AWS RAM shares and a Lambda function running FastAPI. In addition, we use a private Application Load Balancer to front our Lambda function. First, let’s break down the stack.&lt;/p&gt;
+&lt;p&gt;Our Pulumi project consists of the following files:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;settings.py - holds generic settings and Pulumi configuration variables.&lt;/li&gt;
+&lt;li&gt;helpers.py - holds generic helper functions, if any.&lt;/li&gt;
+&lt;li&gt;vpc.py - constructs three VPCs in our shared service AWS account.&lt;/li&gt;
+&lt;li&gt;lattice.py - constructs Lattice Service Networks, associates them with the correct VPCs and shares them with the correct AWS accounts.&lt;/li&gt;
+&lt;li&gt;app_infra.py - constructs everything around the Lambda function, including the ALB, IAM and the Lambda itself.&lt;/li&gt;
+&lt;li&gt;main.py - executes the code.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;First, we define the settings and fetch configuration variables (settings.py):&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; Config
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Various stack settings.
+Below baseline tags must be applied to all created resources without exception:
+1.  Key: &quot;Account&quot;
+    Values: [&quot;Management&quot;, &quot;GreenSandbox&quot;, &quot;BlueSandbox&quot;, &quot;SharedServices&quot;]
+2.  Key: &quot;AccountType&quot;
+    Values: [&quot;Management&quot;, &quot;Workload&quot;]
+3.  Key: &quot;Provisioned&quot;
+    Values: [&quot;Manually&quot;, &quot;Pulumi&quot;, &quot;Terraform&quot;, &quot;Other&quot;]
+4.  Key: &quot;StackName&quot;
+    Values: [&quot;&amp;lt;project-name-here&gt;&quot;]
+&quot;&quot;&quot;&lt;/span&gt;
+pulumi_config &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; Config&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+provider_config &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; Config&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;aws&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+deployment_region &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; provider_config&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;require&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;region&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+baseline_cost_tags &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;Account&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;SharedServices&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;AccountType&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Workload&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;Provisioned&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Pulumi&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;StackName&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;common-service&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+baseline_cost_tags_native &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;key&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;AccountType&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;value&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Workload&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;key&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Account&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;value&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;SharedServices&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;key&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Provisioned&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;value&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Pulumi&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;key&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;StackName&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;value&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;common-service&quot;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+shared_services_main_vpc_cidr &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;10.0.0.0/16&quot;&lt;/span&gt;
+
+shared_service_subnet_cidrs_pub &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;10.0.0.0/22&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;10.0.4.0/22&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+shared_service_subnet_cidrs_app &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;10.0.8.0/22&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;10.0.12.0/22&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+VPC Lattice Local Peers
+&quot;&quot;&quot;&lt;/span&gt;
+blue_network_vpc_cidr &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;192.168.0.0/23&quot;&lt;/span&gt;
+blue_subnet_cidrs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt; 
+    &lt;span class=&quot;token string&quot;&gt;&quot;192.168.0.0/24&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;192.168.1.0/24&quot;&lt;/span&gt;	
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+green_network_vpc_cidr &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;192.168.2.0/23&quot;&lt;/span&gt;
+green_subnet_cidrs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt; 
+    &lt;span class=&quot;token string&quot;&gt;&quot;192.168.2.0/24&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token string&quot;&gt;&quot;192.168.3.0/24&quot;&lt;/span&gt;	
+&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+VPC Lattice Dev Accounts
+&quot;&quot;&quot;&lt;/span&gt;
+green_principal &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; pulumi_config&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;require&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;green-principal&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+blue_principal &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; pulumi_config&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;require&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;blue-principal&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Second, get some helpers (helpers.py):&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi_aws &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; get_caller_identity&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; get_availability_zones
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Various stack helper functions and configuration variables.
+&quot;&quot;&quot;&lt;/span&gt;
+
+current_account &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; get_caller_identity&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+current_account_id &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; current_account&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;account_id
+demo_azs &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; get_availability_zones&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;state&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;available&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;names&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Thirdly, construct the VPCs (vpc.py):&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi_aws &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; ec2
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; ResourceOptions
+
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; settings &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; deployment_region&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; shared_services_main_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_network_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; green_network_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_subnet_cidrs&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; green_subnet_cidrs&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; shared_service_subnet_cidrs_pub&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; shared_service_subnet_cidrs_app
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; helpers &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; demo_azs
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs Shared Services main VPC:
+&quot;&quot;&quot;&lt;/span&gt;
+shared_services_main_vpc &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Vpc&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;SharedServicesMainVpc&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_hostnames&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_support&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServicesMainVpc-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+shared_services_main_igw &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;InternetGateway&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;SharedServicesMainVpcIgw&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServicesMainVpcIgw-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs secondary VPCs for peering and Lattice connection:
+&quot;&quot;&quot;&lt;/span&gt;
+green_network_vpc &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Vpc&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenNetworkVpc&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_hostnames&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_support&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenNetworkVpc-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_network_vpc &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Vpc&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueNetworkVpc&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_hostnames&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_dns_support&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BlueNetworkVpc-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Establishes VPC peering connections:
+&quot;&quot;&quot;&lt;/span&gt;
+green_peering_connection &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;VpcPeeringConnection&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenPeeringConnection&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    peer_vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    auto_accept&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            green_network_vpc
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+green_peering_connection_options &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PeeringConnectionOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenPeeringConnectionOptions&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_peering_connection_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    accepter&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PeeringConnectionOptionsAccepterArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        allow_remote_vpc_dns_resolution&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    requester&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PeeringConnectionOptionsRequesterArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        allow_remote_vpc_dns_resolution&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            green_peering_connection
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_peering_connection &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;VpcPeeringConnection&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BluePeeringConnection&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    peer_vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    auto_accept&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            blue_network_vpc
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_peering_connection_options &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PeeringConnectionOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BluePeeringConnectionOptions&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_peering_connection_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    accepter&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PeeringConnectionOptionsAccepterArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        allow_remote_vpc_dns_resolution&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    requester&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PeeringConnectionOptionsRequesterArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        allow_remote_vpc_dns_resolution&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            blue_peering_connection
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs Shared Services main VPC&apos;s subnets:
+&quot;&quot;&quot;&lt;/span&gt;
+shared_services_pub_subnets &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+shared_services_app_subnets &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; i &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;range&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    prefix &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+
+    shared_service_subnet_pub &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Subnet&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceSubnetPub-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_cidrs_pub&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        availability_zone&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceSubnetPub-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_services_pub_subnets&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;append&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;shared_service_subnet_pub&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_rt_pub &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTable&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceRtPub-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceRtPub-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_pub&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_rt_pub_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTableAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceRtaPub-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_pub&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_pub&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_pub&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_pub_route_to_wan &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Route&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;WanPubRoute-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_pub&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        gateway_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_igw&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        destination_cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_pub
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_subnet_app &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Subnet&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceSubnetApp-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_cidrs_app&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        availability_zone&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceSubnetApp-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_services_app_subnets&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;append&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;shared_service_subnet_app&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_rt_app &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTable&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceRtApp-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceRtApp-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_app&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_rt_app_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTableAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;SharedServiceAppRta-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_app&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_app&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_subnet_app&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_route_to_green &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Route&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;RouteToGreenPeer-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_app&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_peering_connection_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        destination_cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_app&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;green_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    shared_service_route_to_blue &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Route&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;RouteToBluePeer-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_app&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_peering_connection_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        destination_cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_rt_app&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;blue_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs green network peer subnets:
+&quot;&quot;&quot;&lt;/span&gt;
+green_peer_subnets &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; i &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;range&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    prefix &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+
+    green_peer_subnet &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Subnet&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenPeerSubnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_subnet_cidrs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        availability_zone&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenPeerSubnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    green_peer_subnets&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;append&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;green_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    
+    green_peer_rt &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTable&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenPeerRt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenPeerRt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    green_peer_rt_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTableAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenPeerRta-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peer_rt&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    green_peer_main_route &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Route&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenPeerMainRoute-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peer_rt&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_peering_connection_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        destination_cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_peer_rt&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;green_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs blue network peer subnets:
+&quot;&quot;&quot;&lt;/span&gt;
+blue_peer_subnets &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; i &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;range&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    prefix &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+
+    blue_peer_subnet &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Subnet&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BluePeerSubnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_subnet_cidrs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        availability_zone&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;demo_azs&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BluePeerSubnet-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    blue_peer_subnets&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;append&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;blue_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    
+    blue_peer_rt &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTable&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BluePeerRt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BluePeerRt-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    blue_peer_rt_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RouteTableAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BluePeerRta-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peer_rt&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peer_subnet&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    blue_peer_main_route &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Route&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BluePeerMainRoute-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;prefix&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        route_table_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peer_rt&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_peering_connection_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        destination_cidr_block&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc_cidr&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_peer_rt&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;blue_peering_connection&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Creates demo security groups in the Green and Blue VPCs:
+&quot;&quot;&quot;&lt;/span&gt;
+green_lattice_sg &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenSecurityGroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Green Lattice Security Group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ingress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupIngressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Any&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    egress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupEgressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;GreenSecurityGroup-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_lattice_sg &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueSecurityGroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Blue Lattice Security Group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ingress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupIngressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Any&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    egress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupEgressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BlueSecurityGroup-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Creates a demo security group in the main VPC, to be used with the Application Load Balancer:
+&quot;&quot;&quot;&lt;/span&gt;
+main_lambda_alb_sg &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;MainLambdaAlbSecurityGroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ALB Security Group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ingress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupIngressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Any&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    egress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupEgressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;MainLambdaAlbSecurityGroup-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Fourthly, create Lattice networks (lattice.py):&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi_aws_native &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; vpclattice
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi_aws &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; ram
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; export
+
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; settings &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; deployment_region&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; green_principal&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_principal
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; vpc &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; green_lattice_sg&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_lattice_sg
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Creates the RAM shares for Lattice service networks:
+&quot;&quot;&quot;&lt;/span&gt;
+green_ram_share &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ram&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceShare&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenLatticeRamShare&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    allow_external_principals&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token comment&quot;&gt;# Make note that this share will not work outside your AWS Organization by default, set to True if needed&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_ram_share &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ram&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceShare&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueLatticeRamShare&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    allow_external_principals&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token comment&quot;&gt;# Make note that this share will not work outside your AWS Organization by default, set to True if needed&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Associates principals to the RAM shares:
+&quot;&quot;&quot;&lt;/span&gt;
+green_principal_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ram&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PrincipalAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenPrincipalAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    principal&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_principal&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resource_share_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_ram_share&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_principal_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ram&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;PrincipalAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BluePrincipalAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    principal&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_principal&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resource_share_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_ram_share&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs green and blue service networks:
+&quot;&quot;&quot;&lt;/span&gt;
+green_service_network &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ServiceNetwork&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenServiceNetwork&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    auth_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;NONE&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;green-service-network&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+export&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;green-service-network-arn&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; green_service_network&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_service_network &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ServiceNetwork&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueServiceNetwork&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    auth_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;NONE&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;blue-service-network&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+export&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;blue-service-network-arn&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_service_network&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Adds service networks to respective RAM shares:
+&quot;&quot;&quot;&lt;/span&gt;
+green_ram_share_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ram&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenLatticeRamShareAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resource_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_service_network&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resource_share_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_ram_share&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_ram_share&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            green_service_network
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_ram_share_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ram&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ResourceAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueLatticeRamShareAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resource_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_service_network&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resource_share_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_ram_share&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_ram_share&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            blue_service_network
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Adds service netowork VPC associations (Green Peer and Blue Peer in SharedServices):
+&quot;&quot;&quot;&lt;/span&gt;
+green_service_network_vpc_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ServiceNetworkVpcAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenServiceNetworkVpcAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_group_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;green_lattice_sg&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_network_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            green_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            green_network_vpc
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_service_network_vpc_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ServiceNetworkVpcAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueServiceNetworkVpcAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_group_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;blue_lattice_sg&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_network_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_network_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            blue_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            blue_network_vpc
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Finally, create the “SharedService” Lambda function and register it as a Lattice Service (app_infra.py):&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; FileArchive&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; AssetArchive&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; export
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi_aws &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; lambda_&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; ec2
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi_aws_native &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; vpclattice
+&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; json
+
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; settings &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; deployment_region&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_principal&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; green_principal
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; helpers &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; current_account_id
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; vpc &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; main_lambda_alb_sg&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; shared_services_app_subnets&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; shared_services_main_vpc
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; lattice &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; green_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_service_network
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs a private Application Load Balancer for the Lambda function:
+&quot;&quot;&quot;&lt;/span&gt;
+&lt;span class=&quot;token comment&quot;&gt;# This one costs money:&lt;/span&gt;
+shared_service_alb &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;LoadBalancer&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceLb&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    internal&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    load_balancer_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;application&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    security_groups&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;main_lambda_alb_sg&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    subnets&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_app_subnets&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    enable_deletion_protection&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceLb&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+shared_service_target_group &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;TargetGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceTg&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    target_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;lambda&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceTg&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# This one costs money (via ALB dependency):&lt;/span&gt;
+shared_service_listener &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Listener&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceListener&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    load_balancer_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_alb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;80&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;HTTP&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    default_actions&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ListenerDefaultActionArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;forward&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        target_group_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_target_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Creates a Lambda security group in the main VPC:
+&quot;&quot;&quot;&lt;/span&gt;
+main_lambda_func_sg &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;MainLambdaFuncSecurityGroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Lambda Security Group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ingress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupIngressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Any&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    egress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupEgressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;MainLambdaFuncSecurityGroup-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs a Lambda IAM role
+&quot;&quot;&quot;&lt;/span&gt;
+directory_service_execution_role &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Role&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceExecutionRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    assume_role_policy&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;json&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;dumps&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;Version&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;2012-10-17&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;Statement&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Action&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;sts:AssumeRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Effect&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Allow&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Sid&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Principal&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Service&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;lambda.amazonaws.com&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceExecutionRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+lambda_vpc_managed_policy &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;get_policy&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;AWSLambdaVPCAccessExecutionRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+directory_service_execution_role_policy_attachment &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RolePolicyAttachment&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceExecutionRolePolicyAttachment&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    policy_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lambda_vpc_managed_policy&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;directory_service_execution_role
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Creates the DirectoryService Lambda layer:
+&quot;&quot;&quot;&lt;/span&gt;
+
+layer_asset &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; FileArchive&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;./directory_app_layer/lambda_layer.zip&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+service_layer &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;LayerVersion&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceLayer&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    compatible_runtimes&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;python3.8&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    code&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;layer_asset&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    layer_name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;lambda_layer&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs the DirectoryService Lambda function:
+&quot;&quot;&quot;&lt;/span&gt;
+service_function &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Function&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceFunction&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceFunction&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;directory_service_execution_role&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_config&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;FunctionVpcConfigArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        security_group_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;main_lambda_func_sg&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; s &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; shared_services_app_subnets&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    replace_security_groups_on_destroy&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;DirectoryServiceFunction&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    runtime&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;python3.8&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    layers&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;service_layer&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    code&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;AssetArchive&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;.&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; FileArchive&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;./directory_app&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    handler&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;main.lambda_handler&quot;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Adds the ALB Lambda invoke permission:
+&quot;&quot;&quot;&lt;/span&gt;
+alb_invoke_permission &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Permission&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;AlbFunctionPermission&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    action&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;lambda:InvokeFunction&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    function&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;service_function&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;name&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    principal&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;elasticloadbalancing.amazonaws.com&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    source_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_target_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Attaches the Lambda function to the target group:
+&quot;&quot;&quot;&lt;/span&gt;
+service_function_target_group_attachment &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;TargetGroupAttachment&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;FunctionTargetGroupAttachment&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    target_group_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_target_group&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    target_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;service_function&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;alb_invoke_permission&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Creates a Lattice target group:
+&quot;&quot;&quot;&lt;/span&gt;
+shared_service_lattice_tg &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;TargetGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;SharedServiceTargetGroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;type&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;ALB&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    config&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;TargetGroupConfigArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;80&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;HTTP&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        vpc_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_services_main_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;shared-service-target&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    targets&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;TargetGroupTargetArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        &lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_alb&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;80&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Creates a Lattice service and listener:
+&quot;&quot;&quot;&lt;/span&gt;
+&lt;span class=&quot;token comment&quot;&gt;# From here big money:&lt;/span&gt;
+shared_service_lattice_service &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Service&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;SharedServiceLatticeService&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;shared-service&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    auth_type&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;AWS_IAM&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+export&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;shared-service-fqdn&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; shared_service_lattice_service&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;dns_entry&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;domain_name&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+shared_service_lattice_service_listener &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Listener&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;SharedServiceLatticeServiceListener&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;shared-service-listener&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;HTTP&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;80&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_lattice_service&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    default_action&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ListenerDefaultActionArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        forward&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ListenerForwardArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+            target_groups&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+                vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ListenerWeightedTargetGroupArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+                    target_group_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_lattice_tg&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                    weight&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;100&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            shared_service_lattice_service
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_service_lattice_service_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ServiceNetworkServiceAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueServiceLatticeServiceAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_lattice_service&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_network_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            shared_service_lattice_service
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+green_service_lattice_service_association &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;ServiceNetworkServiceAssociation&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;GreenServiceLatticeServiceAssociation&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_lattice_service&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    service_network_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;green_service_network&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;baseline_cost_tags_native&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            shared_service_lattice_service
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+shared_service_auth_policy &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; vpclattice&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;AuthPolicy&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;SharedServiceAuthPolicy&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    policy&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;Version&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;2012-10-17&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;Statement&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Effect&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Allow&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Principal&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;*&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Action&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:Invoke&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Resource&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;*&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Condition&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;StringEquals&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:RequestMethod&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;GET&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:RequestQueryString/q&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;blue&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:SourceVpcOwnerAccount&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;blue_principal&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+                    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Effect&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Allow&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Principal&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;*&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Action&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:Invoke&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Resource&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;*&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Condition&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                    &lt;span class=&quot;token string&quot;&gt;&quot;StringEquals&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:RequestMethod&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;GET&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:RequestQueryString/q&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;green&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+                        &lt;span class=&quot;token string&quot;&gt;&quot;vpc-lattice-svcs:SourceVpcOwnerAccount&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;green_principal&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;
+                    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+                &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    resource_identifier&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;shared_service_lattice_service&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        depends_on&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;
+            shared_service_lattice_service
+        &lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Notice above how we restricted access to the Lattice Service using the “vpc-lattice-svcs:RequestMethod”, “vpc-lattice-svcs:RequestQueryString/q”, and “vpc-lattice-svcs:SourceVpcOwnerAccount” parameters, where “q” is just a query string key.&lt;/p&gt;
+&lt;p&gt;The function is rudimentary and uses a single Lambda layer for FastAPI and Mangum. I provided the layer for your convenience as a .zip archive inside the GitHub repository, so you do not have to rebuild it.&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; fastapi &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; FastAPI
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; mangum &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; Mangum
+  
+&lt;span class=&quot;token comment&quot;&gt;# Initialise the app&lt;/span&gt;
+app &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; FastAPI&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token decorator annotation punctuation&quot;&gt;@app&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;get&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;/&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;async&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;def&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;root&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;q&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;str&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;endpoint&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;q&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+lambda_handler &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; Mangum&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;app&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;By design, we only allow GET requests from the BlueFunction to the ”&lt;a href=&quot;http://lattice-shared-service-fqdn/?q=blue&quot;&gt;http://lattice-shared-service-fqdn/?q=blue&lt;/a&gt;” endpoint to succeed. Identically, only GET requests from the GreenFunction to the ”&lt;a href=&quot;http://lattice-shared-service-fqdn/?q=green&quot;&gt;http://lattice-shared-service-fqdn/?q=green&lt;/a&gt;” endpoint will succeed.&lt;/p&gt;
+&lt;h2&gt;Pulumi Stack: Blue and Green Services&lt;/h2&gt;
+&lt;p&gt;Our “blue-service” and “green-service” stacks are identical apart from configuration, so we will only focus on one. The Pulumi project contains the following files:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;settings.py - holds generic settings and Pulumi configuration variables.&lt;/li&gt;
+&lt;li&gt;helpers.py - holds generic helper functions, if any.&lt;/li&gt;
+&lt;li&gt;vpc.py - constructs a single VPC.&lt;/li&gt;
+&lt;li&gt;app_infra.py - constructs everything around the Lambda function, including the ALB, IAM and the Lambda itself.&lt;/li&gt;
+&lt;li&gt;main.py - executes the code.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Let’s take a look at app_infra.py specifically here:&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;python&quot;&gt;&lt;pre class=&quot;language-python&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; FileArchive&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; AssetArchive
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; pulumi_aws &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; lb&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; lambda_&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; ec2
+&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; json
+
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; settings &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; deployment_region&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; shared_service_fqdn
+&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; vpc &lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; blue_sandbox_vpc&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; blue_sandbox_app_subnets
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Lambda security group
+&quot;&quot;&quot;&lt;/span&gt;
+
+blue_lambda_func_sg &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroup&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueLambdaFuncSecurityGroup&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Lambda Security Group&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_id&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_sandbox_vpc&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    ingress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupIngressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        description&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;Any&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    egress&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;ec2&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;SecurityGroupEgressArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        from_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        to_port&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        protocol&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;-1&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;0.0.0.0/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        ipv6_cidr_blocks&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;::/0&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;BlueLambdaFuncSecurityGroup-&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;deployment_region&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    opts&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;ResourceOptions&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;parent&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_sandbox_vpc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs a Lambda IAM role
+&quot;&quot;&quot;&lt;/span&gt;
+blue_lambda_execution_role &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Role&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueLambdaExecutionRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    assume_role_policy&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;json&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;dumps&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;Version&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;2012-10-17&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token string&quot;&gt;&quot;Statement&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Action&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;sts:AssumeRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Effect&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Allow&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Sid&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;Principal&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+                &lt;span class=&quot;token string&quot;&gt;&quot;Service&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;lambda.amazonaws.com&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+            &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;BlueLambdaExecutionRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+lambda_vpc_managed_policy &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;get_policy&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;AWSLambdaVPCAccessExecutionRole&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+blue_lambda_execution_role_policy_attachment &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; iam&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;RolePolicyAttachment&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueLambdaRolePolicyAttachment&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    policy_arn&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lambda_vpc_managed_policy&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_lambda_execution_role
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token triple-quoted-string string&quot;&gt;&quot;&quot;&quot;
+Constructs the Blue Lambda function:
+&quot;&quot;&quot;&lt;/span&gt;
+blue_function &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Function&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueFunction&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    tags&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;**&lt;/span&gt;baseline_cost_tags&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;Name&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&quot;BlueFunction&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    role&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;blue_lambda_execution_role&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;arn&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    vpc_config&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;FunctionVpcConfigArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        security_group_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;blue_lambda_func_sg&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        subnet_ids&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;s&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;id&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; s &lt;span class=&quot;token keyword&quot;&gt;in&lt;/span&gt; blue_sandbox_app_subnets&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    replace_security_groups_on_destroy&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token boolean&quot;&gt;True&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    name&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;BlueFunction&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    runtime&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;python3.8&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    code&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;AssetArchive&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;.&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; FileArchive&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;./blue_app&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    handler&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&quot;main.lambda_handler&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    environment&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;lambda_&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;FunctionEnvironmentArgs&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+        variables&lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+            &lt;span class=&quot;token string&quot;&gt;&quot;BLUE_ENDPOINT&quot;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token string-interpolation&quot;&gt;&lt;span class=&quot;token string&quot;&gt;f&quot;http://&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;shared_service_fqdn&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;/?q=blue&quot;&lt;/span&gt;&lt;/span&gt;
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This is a rudimentary Lambda function to execute a GET request towards our shared service Lattice endpoint.&lt;/p&gt;
+&lt;h2&gt;Testing Connectivity&lt;/h2&gt;
+&lt;p&gt;You may have noticed that our environments are private, and all Lambda functions reside within their dedicated VPCs, which have no route to WAN. Let’s create a default test execution of our BlueFunction. First, we ensure the BLUE_ENDPOINT environment variable contains the “q=blue” query string:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/devops-pastebin/844ac503cea08f1f7521b90dbf07df87/BlueLambdaEnvConfig.png&quot; alt=&quot;AWS Lambda Blue Configuration Correct&quot;&gt;&lt;/p&gt;
+&lt;p&gt;Executing the function will produce the desired result:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/devops-pastebin/d4548e3542c75d1226b76b23697491d1/BlueLambdaEndpointTestSuccess.png&quot; alt=&quot;AWS Lambda Blue Test Success&quot;&gt;&lt;/p&gt;
+&lt;p&gt;Let’s now manually edit the query string within the BLUE_ENDPOINT environment variable:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/devops-pastebin/d4394d32cd13636ff7028daa5a45bba5/BlueLambdaEnvConfigWrong.png&quot; alt=&quot;AWS Lambda Blue Configuration Wrong&quot;&gt;&lt;/p&gt;
+&lt;p&gt;And execute the function one more time:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/devops-pastebin/57826e5d64a5014fccb7a4314e280e90/BlueLambdaTestForbidden.png&quot; alt=&quot;AWS Lambda Blue Test Fail&quot;&gt;&lt;/p&gt;
+&lt;p&gt;Success! Feel free to perform the same steps with the GreenFunction.&lt;/p&gt;
 &lt;h2&gt;Cleaning Up&lt;/h2&gt;
-&lt;p&gt;Run “pulumi destroy” on all the stacks in reverse order. Start from “green-service”, then “blue-service”, then “common-service”. Afterwards, delete CloudWatch Lambda log groups from all three accounts manually if needed. Due to AWS’s throttling, you may need to manually delete some VPC Lattice objects and do a “pulumi refresh” instead, although there is usually no need to. If you experience throttling, running “pulumi destroy” several times resolves the issue.&lt;/p&gt;</content:encoded></item><item><title><![CDATA[VPC Lattice Part 1. Overview]]></title><description><![CDATA[Introduction On the 31st of March 2023, VPC Lattice made General Availability. The new managed service is here to help us create logical…]]></description><link>https://s.vodwood.codes/devops-pastebin/lattice-part-one/</link><guid isPermaLink="false">https://s.vodwood.codes/devops-pastebin/lattice-part-one/</guid><pubDate>Mon, 03 Apr 2023 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
+&lt;p&gt;Run “pulumi destroy” on all the stacks in reverse order. Start from “green-service”, then “blue-service”, then “common-service”. Afterwards, delete CloudWatch Lambda log groups from all three accounts manually if needed. Due to AWS’s throttling, you may need to manually delete some VPC Lattice objects and do a “pulumi refresh” instead, although there is usually no need. If you experience throttling, running “pulumi destroy” several times resolves the issue.&lt;/p&gt;</content:encoded></item><item><title><![CDATA[VPC Lattice Part 1. Overview]]></title><description><![CDATA[Introduction On the 31st of March 2023, VPC Lattice made General Availability. The new managed service is here to help us create logical…]]></description><link>https://s.vodwood.codes/devops-pastebin/lattice-part-one/</link><guid isPermaLink="false">https://s.vodwood.codes/devops-pastebin/lattice-part-one/</guid><pubDate>Mon, 03 Apr 2023 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Introduction&lt;/h2&gt;
 &lt;p&gt;On the 31st of March 2023, VPC Lattice made General Availability. The new managed service is here to help us create logical application layer networks across VPCs and isolated AWS accounts. A user &lt;a href=&quot;https://docs.aws.amazon.com/vpc-lattice/index.html&quot;&gt;guide is available&lt;/a&gt;, along with several examples. Throughout several posts, I will present an overview of the offering, some implementation details, and a deep dive into a potential reference architecture. This post is Part 1 of the series on Lattice and does not include an IaC follow-along.&lt;/p&gt;
 &lt;h2&gt;What Is Lattice and Why Do I Need It&lt;/h2&gt;
 &lt;p&gt;Consider the use case: your company’s landing zone on AWS consists of multiple isolated accounts managed from within a single AWS Organization. Each development team is assigned an account to deploy their services. To make service endpoints available for other teams in different AWS accounts to consume, you must ensure network connectivity between these accounts. Service-to-service connectivity is considered east-west traffic that does not leave your internal network boundary. To interconnect, you will consider several standard options:&lt;/p&gt;
